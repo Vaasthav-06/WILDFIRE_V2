@@ -1,0 +1,12 @@
+﻿data/
+models/
+results/
+catboost_info/
+logs/
+.venv/
+venv/
+__pycache__/
+*.xml
+*.log
+*.nc
+*.csv

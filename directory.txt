@@ -1,0 +1,151 @@
+Root: wildfire_v2/
+════════════════════════════════════════
+├── catboost_info/
+│   ├── learn/
+│   │   └── events.out.tfevents
+│   ├── tmp/
+│   ├── catboost_training.json
+│   ├── learn_error.tsv
+│   └── time_left.tsv
+├── data/
+│   ├── cache/
+│   │   └── era5_lookup_h12.parquet
+│   ├── processed/
+│   │   ├── firms_enriched.csv
+│   │   ├── training_data.csv
+│   │   └── training_features.csv
+│   └── raw/
+│       ├── era5/
+│       │   ├── data_stream-oper_stepType-accum.nc
+│       │   ├── data_stream-oper_stepType-instant.nc
+│       │   ├── era5_2018_accum.nc
+│       │   ├── era5_2018_instant.nc
+│       │   ├── era5_2019_accum.nc
+│       │   ├── era5_2019_instant.nc
+│       │   ├── era5_2020_accum.nc
+│       │   ├── era5_2020_instant.nc
+│       │   ├── era5_2021_accum.nc
+│       │   ├── era5_2021_instant.nc
+│       │   ├── era5_2022_accum.nc
+│       │   ├── era5_2022_instant.nc
+│       │   ├── era5_2023_accum.nc
+│       │   ├── era5_2023_instant.nc
+│       │   ├── era5_2024_accum.nc
+│       │   ├── era5_2024_instant.nc
+│       │   ├── era5_2025_accum.nc
+│       │   ├── era5_2025_instant.nc
+│       │   ├── era5_india_2024.nc
+│       │   └── era5_india_2025.nc
+│       ├── ndvi/
+│       │   ├── MOD13A3.061_1km_aid0001 (1).nc
+│       │   └── MOD13A3.061_1km_aid0001.nc
+│       ├── filtered_2018_2025.csv
+│       ├── filtered_2024_2026.csv
+│       ├── fire_archive_SV-C2_761772.csv
+│       └── india_bbox.geojson
+├── logs/
+│   ├── build_features.log
+│   ├── build_training_data.log
+│   ├── era5_download.log
+│   └── train_models.log
+├── models/
+│   ├── catboost.pkl
+│   ├── ensemble.pkl
+│   ├── lightgbm.pkl
+│   ├── logistic_regression.pkl
+│   ├── production_model.pkl
+│   ├── random_forest.pkl
+│   └── xgboost.pkl
+├── notebooks/
+├── results/
+│   ├── figures/
+│   │   ├── confusion_matrix_catboost.png
+│   │   ├── confusion_matrix_xgboost.png
+│   │   ├── model_comparison.png
+│   │   ├── pr_curves.png
+│   │   ├── reliability_diagram.png
+│   │   ├── roc_curves.png
+│   │   ├── shap_catboost.png
+│   │   └── shap_xgboost.png
+│   └── metrics/
+│       ├── ablation_study.csv
+│       ├── cv_results.json
+│       ├── error_analysis_catboost.csv
+│       └── error_analysis_xgboost.csv
+├── scripts/
+│   ├── build_features.py
+│   ├── build_training_data.py
+│   ├── create_india_bbox.py
+│   ├── download_era5.py
+│   ├── merge_firms.py
+│   └── train_models.py
+├── src/
+│   ├── api/
+│   │   ├── __init__.py
+│   │   └── app.py
+│   ├── data/
+│   │   ├── __init__.py
+│   │   ├── era5.py
+│   │   ├── evi.py
+│   │   ├── nasa_firms.py
+│   │   ├── negative_sampling.py
+│   │   ├── validator.py
+│   │   └── weather.py
+│   ├── explainability/
+│   │   └── why_engine.py
+│   ├── features/
+│   │   ├── __init__.py
+│   │   └── engineering.py
+│   ├── inference/
+│   │   ├── __init__.py
+│   │   ├── engine.py
+│   │   ├── forecast_ingest.py
+│   │   └── map_export.py
+│   ├── models/
+│   │   ├── __init__.py
+│   │   ├── cross_validation.py
+│   │   ├── evaluate.py
+│   │   └── train.py
+│   ├── spread/
+│   │   └── direction.py
+│   ├── visualization/
+│   │   └── __init__.py
+│   ├── __init__.py
+│   └── config.py
+├── tests/
+├── wildfire-react-dashboard/
+│   ├── public/
+│   │   ├── favicon.svg
+│   │   ├── icons.svg
+│   │   └── predictions.geojson
+│   ├── src/
+│   │   ├── assets/
+│   │   │   ├── hero.png
+│   │   │   ├── react.svg
+│   │   │   └── vite.svg
+│   │   ├── components/
+│   │   │   ├── Legend.jsx
+│   │   │   ├── MapView.jsx
+│   │   │   └── Sidebar.jsx
+│   │   ├── App.css
+│   │   ├── App.jsx
+│   │   ├── index.css
+│   │   └── main.jsx
+│   ├── .gitignore
+│   ├── eslint.config.js
+│   ├── index.html
+│   ├── package-lock.json
+│   ├── package.json
+│   ├── postcss.config.js
+│   ├── README.md
+│   ├── tailwind.config.js
+│   └── vite.config.js
+├── .gitignore
+├── dashboard.html
+├── directory.txt
+├── generate_structure.py
+├── predict_tomorrow.py
+├── repomix-output.xml
+├── requirements.txt
+├── run_prediction.py
+└── web-builder-context.xml

@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Wildfire Prediction Dashboard</title>
+    <!-- MapLibre GL JS -->
+    <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+    <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet" />
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0b0f19;
+            --panel-bg: rgba(15, 23, 42, 0.7);
+            --panel-border: rgba(255, 255, 255, 0.1);
+            --text-main: #f1f5f9;
+            --text-muted: #94a3b8;
+            --accent: #3b82f6;
+            --risk-low: #3b82f6;
+            --risk-mod: #fbbf24;
+            --risk-high: #ef4444;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Inter', sans-serif; background: var(--bg-color); color: var(--text-main); overflow: hidden; }
+        #map { position: absolute; top: 0; bottom: 0; width: 100%; z-index: 1; }
+        
+        /* Glassmorphism Panels */
+        .glass-panel {
+            background: var(--panel-bg);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--panel-border);
+            border-radius: 16px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+            z-index: 10;
+            position: absolute;
+        }
+
+        /* Header */
+        header { top: 20px; left: 20px; padding: 20px 24px; width: 380px; }
+        header h1 { font-size: 1.5rem; font-weight: 800; margin-bottom: 8px; background: linear-gradient(90deg, #60a5fa, #a78bfa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        header p { font-size: 0.9rem; color: var(--text-muted); line-height: 1.4; }
+
+        /* Loader */
+        #loader { display: none; margin-top: 16px; align-items: center; gap: 12px; }
+        .spinner { width: 24px; height: 24px; border: 3px solid rgba(255,255,255,0.1); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Sidebar / Details */
+        #sidebar { top: 20px; right: 20px; bottom: 20px; width: 380px; padding: 24px; display: flex; flex-direction: column; gap: 20px; transform: translateX(120%); transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1); overflow-y: auto; }
+        #sidebar.open { transform: translateX(0); }
+        .close-btn { position: absolute; top: 20px; right: 20px; background: none; border: none; color: var(--text-muted); font-size: 1.5rem; cursor: pointer; transition: color 0.2s; }
+        .close-btn:hover { color: white; }
+        
+        .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .stat-card { background: rgba(0,0,0,0.3); padding: 12px 16px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.05); }
+        .stat-label { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+        .stat-value { font-size: 1.25rem; font-weight: 600; }
+
+        .risk-badge { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 0.85rem; font-weight: 600; text-transform: uppercase; margin-bottom: 12px; }
+        .risk-badge.critical { background: rgba(239, 68, 68, 0.2); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.5); }
+        .risk-badge.moderate { background: rgba(245, 158, 11, 0.2); color: #fcd34d; border: 1px solid rgba(245, 158, 11, 0.5); }
+        .risk-badge.low { background: rgba(59, 130, 246, 0.2); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.5); }
+
+        .reasons-list { list-style: none; display: flex; flex-direction: column; gap: 12px; margin-top: 8px; }
+        .reasons-list li { background: rgba(255,255,255,0.03); padding: 12px; border-radius: 8px; font-size: 0.9rem; line-height: 1.4; border-left: 3px solid var(--accent); }
+        
+        /* Legend */
+        #legend { bottom: 20px; left: 20px; padding: 16px; }
+        .legend-title { font-size: 0.85rem; font-weight: 600; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); }
+        .legend-row { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; font-size: 0.9rem; }
+        .legend-color { width: 16px; height: 16px; border-radius: 4px; }
+    </style>
+</head>
+<body>
+
+    <div id="map"></div>
+
+    <header class="glass-panel">
+        <h1>AI Wildfire Prediction</h1>
+        <p>Live 24-hour risk forecasting across India using ERA5 climate data and Open-Meteo forecasts.</p>
+        <div id="loader">
+            <div class="spinner"></div>
+            <span id="loader-text" style="font-size: 0.9rem; color: var(--text-muted);">Initializing Engine...</span>
+        </div>
+    </header>
+
+    <div id="legend" class="glass-panel">
+        <div class="legend-title">Risk Probability</div>
+        <div class="legend-row">
+            <div class="legend-color" style="background: rgba(239, 68, 68, 0.8);"></div>
+            <span>Critical (> 65%)</span>
+        </div>
+        <div class="legend-row">
+            <div class="legend-color" style="background: rgba(245, 158, 11, 0.8);"></div>
+            <span>Moderate (30% - 65%)</span>
+        </div>
+        <div class="legend-row">
+            <div class="legend-color" style="background: rgba(59, 130, 246, 0.4);"></div>
+            <span>Low (< 30%)</span>
+        </div>
+    </div>
+
+    <aside id="sidebar" class="glass-panel">
+        <button class="close-btn" onclick="closeSidebar()">×</button>
+        <div>
+            <h2 id="cell-coords" style="font-size: 1.25rem; font-weight: 600; margin-bottom: 8px;">Cell Details</h2>
+            <div id="risk-badge" class="risk-badge low">Low Risk</div>
+            <p id="fire-prob" style="font-size: 2.5rem; font-weight: 800; margin-bottom: 4px;">--%</p>
+            <p style="font-size: 0.85rem; color: var(--text-muted);">Ignition Probability</p>
+        </div>
+
+        <div>
+            <h3 style="font-size: 0.9rem; margin-bottom: 12px; color: var(--text-muted); text-transform: uppercase;">Driving Factors</h3>
+            <div class="stat-grid">
+                <div class="stat-card">
+                    <div class="stat-label">Temperature</div>
+                    <div class="stat-value" id="val-temp">--°C</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Humidity</div>
+                    <div class="stat-value" id="val-hum">--%</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Wind Spd</div>
+                    <div class="stat-value" id="val-wind">-- m/s</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">VPD</div>
+                    <div class="stat-value" id="val-vpd">-- kPa</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Drought (KBDI)</div>
+                    <div class="stat-value" id="val-kbdi">--</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Vegetation (NDVI)</div>
+                    <div class="stat-value" id="val-ndvi">--</div>
+                </div>
+            </div>
+        </div>
+
+        <div id="spread-container" style="display: none; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.1);">
+            <h3 style="font-size: 0.9rem; margin-bottom: 8px; color: var(--text-muted); text-transform: uppercase;">Spread Vector</h3>
+            <div style="display: flex; align-items: center; gap: 12px;">
+                <div id="spread-icon" style="font-size: 1.5rem; transform: rotate(0deg);">↑</div>
+                <div>
+                    <div id="spread-dir" style="font-weight: 600;">--</div>
+                    <div id="spread-int" style="font-size: 0.85rem; color: var(--text-muted);">Intensity: --</div>
+                </div>
+            </div>
+        </div>
+
+        <div id="explanation-container" style="display: none; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.1);">
+            <h3 style="font-size: 0.9rem; margin-bottom: 8px; color: var(--text-muted); text-transform: uppercase;">AI Analysis</h3>
+            <ul class="reasons-list" id="reasons-list">
+                <!-- Populated by JS -->
+            </ul>
+        </div>
+        
+        <div id="sidebar-loader" style="display:none; align-items: center; justify-content: center; padding: 40px;">
+            <div class="spinner"></div>
+        </div>
+    </aside>
+
+    <script>
+        const API_BASE = 'http://localhost:8000';
+        
+        // Initialize MapLibre
+        const map = new maplibregl.Map({
+            container: 'map',
+            style: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+            center: [78.9629, 20.5937], // Center of India
+            zoom: 4.2,
+            pitch: 40,
+            bearing: 0
+        });
+
+        // UI Elements
+        const loader = document.getElementById('loader');
+        const loaderText = document.getElementById('loader-text');
+        const sidebar = document.getElementById('sidebar');
+
+        function setLoader(show, text) {
+            loader.style.display = show ? 'flex' : 'none';
+            if (text) loaderText.textContent = text;
+        }
+
+        function closeSidebar() {
+            sidebar.classList.remove('open');
+        }
+
+        map.on('load', async () => {
+            setLoader(true, 'Fetching 24h risk forecast...');
+            try {
+                // Fetch Map Data
+                const res = await fetch(`${API_BASE}/map/24h?min_prob=0.01&include_arrows=true`);
+                if (!res.ok) throw new Error('API Error');
+                const data = await res.json();
+                
+                const gridGeojson = data.geojson_grid;
+                const arrowGeojson = data.geojson_arrows;
+
+                // Add Grid Source
+                map.addSource('risk-grid', {
+                    type: 'geojson',
+                    data: gridGeojson
+                });
+
+                // Add Grid Layer (Extruded Polygons or Fill)
+                map.addLayer({
+                    id: 'risk-grid-fill',
+                    type: 'fill-extrusion',
+                    source: 'risk-grid',
+                    paint: {
+                        'fill-extrusion-color': [
+                            'interpolate',
+                            ['linear'],
+                            ['get', 'fire_prob'],
+                            0, 'rgba(59, 130, 246, 0.1)',
+                            0.3, 'rgba(245, 158, 11, 0.6)',
+                            0.65, 'rgba(239, 68, 68, 0.9)'
+                        ],
+                        'fill-extrusion-height': [
+                            'interpolate',
+                            ['linear'],
+                            ['get', 'fire_prob'],
+                            0, 0,
+                            1, 50000
+                        ],
+                        'fill-extrusion-opacity': 0.8
+                    }
+                });
+
+                // Add Arrows Source
+                if (arrowGeojson && arrowGeojson.features.length > 0) {
+                    map.addSource('risk-arrows', {
+                        type: 'geojson',
+                        data: arrowGeojson
+                    });
+
+                    // Add Arrow Lines
+                    map.addLayer({
+                        id: 'risk-arrows-line',
+                        type: 'line',
+                        source: 'risk-arrows',
+                        paint: {
+                            'line-color': '#ffffff',
+                            'line-width': 2,
+                            'line-opacity': 0.8
+                        }
+                    });
+                }
+
+                // Interaction
+                map.on('click', 'risk-grid-fill', async (e) => {
+                    if (!e.features.length) return;
+                    const props = e.features[0].properties;
+                    const coords = e.lngLat;
+                    
+                    // Fly to point
+                    map.flyTo({ center: coords, zoom: 8, duration: 1500 });
+                    
+                    openSidebarForCell(coords.lat, coords.lng, props.fire_prob);
+                });
+
+                map.on('mouseenter', 'risk-grid-fill', () => {
+                    map.getCanvas().style.cursor = 'pointer';
+                });
+                map.on('mouseleave', 'risk-grid-fill', () => {
+                    map.getCanvas().style.cursor = '';
+                });
+
+            } catch (err) {
+                console.error(err);
+                alert("Failed to connect to the backend. Ensure FastAPI is running on port 8000.");
+            } finally {
+                setLoader(false);
+            }
+        });
+
+        async function openSidebarForCell(lat, lng, prob) {
+            sidebar.classList.add('open');
+            
+            // Set initial known data
+            document.getElementById('cell-coords').textContent = `Cell: ${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+            document.getElementById('fire-prob').textContent = `${(prob * 100).toFixed(1)}%`;
+            
+            const badge = document.getElementById('risk-badge');
+            badge.className = 'risk-badge';
+            if (prob >= 0.65) { badge.classList.add('critical'); badge.textContent = 'Critical Risk'; }
+            else if (prob >= 0.3) { badge.classList.add('moderate'); badge.textContent = 'Moderate Risk'; }
+            else { badge.classList.add('low'); badge.textContent = 'Low Risk'; }
+
+            // Reset details
+            ['temp', 'hum', 'wind', 'vpd', 'kbdi', 'ndvi'].forEach(id => {
+                document.getElementById(`val-${id}`).textContent = '...';
+            });
+            document.getElementById('spread-container').style.display = 'none';
+            document.getElementById('explanation-container').style.display = 'none';
+            document.getElementById('sidebar-loader').style.display = 'flex';
+
+            try {
+                // Fetch deep cell data
+                const res = await fetch(`${API_BASE}/predict/cell/${lat}/${lng}?forecast_days=1`);
+                if (!res.ok) throw new Error('API Error');
+                const data = await res.json();
+
+                document.getElementById('sidebar-loader').style.display = 'none';
+
+                // Update metrics
+                document.getElementById('val-temp').textContent = data.weather.temp_c !== null ? `${data.weather.temp_c.toFixed(1)}°C` : 'N/A';
+                document.getElementById('val-hum').textContent = data.weather.humidity_pct !== null ? `${data.weather.humidity_pct.toFixed(0)}%` : 'N/A';
+                document.getElementById('val-wind').textContent = data.weather.wind_ms !== null ? `${data.weather.wind_ms.toFixed(1)} m/s` : 'N/A';
+                document.getElementById('val-vpd').textContent = data.weather.vpd_kpa !== null ? `${data.weather.vpd_kpa.toFixed(2)} kPa` : 'N/A';
+                document.getElementById('val-kbdi').textContent = data.weather.kbdi !== null ? data.weather.kbdi.toFixed(0) : 'N/A';
+                document.getElementById('val-ndvi').textContent = 'N/A';
+
+                // Spread
+                if (data.spread_direction) {
+                    document.getElementById('spread-container').style.display = 'block';
+                    document.getElementById('spread-dir').textContent = `${data.spread_direction} (${data.spread_bearing_deg}°)`;
+                    document.getElementById('spread-int').textContent = `Intensity: ${data.spread_intensity}`;
+                    document.getElementById('spread-icon').style.transform = `rotate(${data.spread_bearing_deg}deg)`;
+                }
+
+                // Explanations
+                if (data.top_reasons && data.top_reasons.length > 0) {
+                    document.getElementById('explanation-container').style.display = 'block';
+                    const list = document.getElementById('reasons-list');
+                    list.innerHTML = '';
+                    data.top_reasons.forEach(reason => {
+                        const li = document.createElement('li');
+                        li.textContent = reason;
+                        list.appendChild(li);
+                    });
+                    
+                    if (data.mitigating_factors && data.mitigating_factors.length > 0) {
+                        data.mitigating_factors.forEach(mit => {
+                            const li = document.createElement('li');
+                            li.textContent = `Mitigation: ${mit}`;
+                            li.style.borderLeftColor = '#10b981'; // Green for mitigation
+                            list.appendChild(li);
+                        });
+                    }
+                }
+
+            } catch (err) {
+                console.error(err);
+                document.getElementById('sidebar-loader').style.display = 'none';
+            }
+        }
+    </script>
+</body>
+</html>
