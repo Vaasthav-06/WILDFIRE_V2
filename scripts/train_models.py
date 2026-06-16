@@ -1,141 +1,162 @@
 """
 scripts/train_models.py
 
-Full model training and evaluation pipeline.
+Master Training Orchestrator for Wildfire Risk Prediction.
+Handles model training, metrics generation, artifact plotting, and strict terminal logging.
 """
 
-import json
 import joblib
-import numpy as np
 import pandas as pd
 from loguru import logger
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
+from xgboost import XGBClassifier
+from lightgbm import LGBMClassifier
+from catboost import CatBoostClassifier
+from sklearn.impute import SimpleImputer
+
+# Rich UI for terminal
 from rich.console import Console
-from rich.rule import Rule
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
 
 from src.config import (
     DATA_PROCESSED,
     MODELS_DIR,
-    RESULTS_DIR,
+    EVAL_DIR,
+    SHAP_DIR,
     FEATURE_COLS,
     TARGET_COL,
     RANDOM_SEED,
 )
-from src.models.train import train_all_models, build_ensemble, compute_metrics
-from src.models.evaluate import (
-    plot_roc_curves,
-    plot_pr_curves,
-    plot_confusion_matrix,
-    plot_reliability_diagram,
-    plot_shap_importance,
-    run_ablation_study,
-    plot_model_comparison,
-    run_error_analysis,
-)
-from src.models.cross_validation import SpatialBlockCV
+from src.models.evaluate_utils import calculate_metrics, generate_evaluation_artifacts, generate_shap_artifacts
 
-import lightgbm as lgb
-
-logger.add("logs/train_models.log", rotation="50 MB", level="INFO")
+# Setup logging
+logger.remove()
+logger.add("logs/training_pipeline.log", rotation="50 MB", level="INFO")
 console = Console()
 
+def get_models():
+    """Define the exact models to be trained."""
+    return {
+        "Logistic Regression": Pipeline([
+            ('imputer', SimpleImputer(strategy='median')), # <-- ADDED IMPUTER
+            ('scaler', StandardScaler()), 
+            ('lr', LogisticRegression(random_state=RANDOM_SEED, max_iter=1000, class_weight='balanced'))
+        ]),
+        "Random Forest": Pipeline([
+            ('imputer', SimpleImputer(strategy='median')), # <-- ADDED IMPUTER PIPELINE
+            ('rf', RandomForestClassifier(n_estimators=200, random_state=RANDOM_SEED, class_weight='balanced', n_jobs=-1))
+        ]),
+        "XGBoost": XGBClassifier(
+            n_estimators=300, random_state=RANDOM_SEED, scale_pos_weight=2.0, eval_metric="logloss", device="cuda"
+        ),
+        "LightGBM": LGBMClassifier(
+            n_estimators=300, random_state=RANDOM_SEED, class_weight='balanced', verbose=-1, device="gpu"
+        ),
+        "CatBoost": CatBoostClassifier(
+            iterations=300, random_state=RANDOM_SEED, auto_class_weights='Balanced', verbose=0, task_type="GPU"
+        )
+    }
 
-def phase(title: str):
-    console.print(Rule(f"[bold cyan]{title}[/bold cyan]", style="cyan"))
-
+def print_metrics_table(metrics: dict):
+    """Generate a clean terminal table for evaluation metrics."""
+    table = Table(show_header=False, box=None)
+    table.add_column("Metric", style="cyan", width=15)
+    table.add_column("Value", style="magenta", justify="right")
+    
+    for key, value in metrics.items():
+        table.add_row(key, f"{value:.4f}")
+    
+    console.print("-" * 34)
+    console.print(table)
+    console.print("-" * 34)
 
 def main():
-    # ── Load data ────────────────────────────────────────────
+    console.clear()
+    console.print(Panel.fit("[bold green]WILDFIRE V2: MODEL TRAINING PIPELINE[/bold green]"))
+
+    # ── 1. Load Data ─────────────────────────────────────────
     path = DATA_PROCESSED / "training_features.csv"
     logger.info(f"Loading {path}")
+    console.print(f"[bold yellow][INFO][/bold yellow] Loading dataset from: {path.name}...")
+    
     df = pd.read_csv(path)
-    logger.info(f"Loaded {len(df):,} rows | {len(FEATURE_COLS)} features")
-
     X = df[FEATURE_COLS]
     y = df[TARGET_COL]
 
-    # ── Train all models with spatial CV ─────────────────────
-    phase("Phase 4A: Training all models")
-    results = train_all_models(df, cv_sample_size=200_000)
+    # ── Strict Temporal Split (Train: 2018-2023 | Test: 2024-2025) ──
+    df["acq_date"] = pd.to_datetime(df["acq_date"])
+    
+    train_mask = df["acq_date"].dt.year <= 2023
+    test_mask = df["acq_date"].dt.year >= 2024
 
-    results_path = RESULTS_DIR / "metrics" / "cv_results.json"
-    with open(results_path, "w") as f:
-        json.dump(results, f, indent=2, default=str)
-    logger.info(f"CV results saved → {results_path}")
+    X_train = df.loc[train_mask, FEATURE_COLS]
+    y_train = df.loc[train_mask, TARGET_COL]
 
-    # ── Collect predictions for plots ────────────────────────
-    phase("Phase 4B: Generating evaluation plots")
-    model_probs = {}
-    for name in results:
-        model = joblib.load(MODELS_DIR / f"{name}.pkl")
-        if hasattr(model, "predict_proba"):
-            model_probs[name] = model.predict_proba(X)[:, 1]
+    X_test = df.loc[test_mask, FEATURE_COLS]
+    y_test = df.loc[test_mask, TARGET_COL]
+    
+    # Optional: Delete the train_test_split import at the top of the file if you like a clean workspace
+    
+    console.print(f"[bold yellow][INFO][/bold yellow] Features: {len(FEATURE_COLS)} | Train rows: {len(X_train):,} | Test rows: {len(X_test):,}\n")
 
-    # ── Build and evaluate ensemble ──────────────────────────
-    phase("Phase 4C: Building ensemble")
-    ensemble = build_ensemble(results)
-    ensemble.fit(X, y)
-    model_probs["ensemble"] = ensemble.predict_proba(X)[:, 1]
-    joblib.dump(ensemble, MODELS_DIR / "ensemble.pkl")
+    models = get_models()
+    best_auc = 0
+    best_model_name = ""
+    
+    # ── 2. Train & Evaluate Loop ─────────────────────────────
+    for name, model in models.items():
+        safe_name = name.lower().replace(" ", "_")
+        model_eval_dir = EVAL_DIR / safe_name
+        model_shap_dir = SHAP_DIR / safe_name
+        
+        console.print(f"{'='*50}\n[bold blue]TRAINING MODEL: {name.upper()}[/bold blue]\n{'='*50}")
+        
+        # Train
+        console.print("[bold yellow][INFO][/bold yellow] Training started...")
+        model.fit(X_train, y_train)
+        console.print("[bold yellow][INFO][/bold yellow] Training completed.\n")
 
-    best_name = max(results, key=lambda n: results[n]["cv"]["roc_auc_mean"])
-    best_model = joblib.load(MODELS_DIR / f"{best_name}.pkl")
-    best_threshold = results[best_name]["threshold"]
-    logger.info(f"Best model: {best_name} (threshold={best_threshold})")
+        # Predict
+        y_pred = model.predict(X_test)
+        y_prob = model.predict_proba(X_test)[:, 1]
 
-    # ── Evaluation plots ─────────────────────────────────────
-    plot_roc_curves(model_probs, y.values)
-    plot_pr_curves(model_probs, y.values)
-    plot_reliability_diagram(model_probs, y.values)
-    plot_model_comparison(results)
+        # Evaluate
+        console.print("[bold]Evaluation Results:[/bold]")
+        metrics = calculate_metrics(y_test, y_pred, y_prob)
+        print_metrics_table(metrics)
+        
+        if metrics["ROC-AUC"] > best_auc:
+            best_auc = metrics["ROC-AUC"]
+            best_model_name = name
 
-    y_pred_best = (model_probs[best_name] >= best_threshold).astype(int)
-    plot_confusion_matrix(y.values, y_pred_best, best_name, best_threshold)
+        # Generate Artifacts
+        console.print(f"[bold yellow][INFO][/bold yellow] Generating evaluation plots...")
+        generate_evaluation_artifacts(y_test, y_pred, y_prob, model_eval_dir)
+        console.print(f"       Saved metrics plots: [dim]{model_eval_dir}/[/dim]")
+        
+        console.print(f"[bold yellow][INFO][/bold yellow] Generating SHAP analysis...")
+        # Use a background sample to speed up SHAP calculation
+        shap_sample = X_train.sample(min(2000, len(X_train)), random_state=RANDOM_SEED)
+        generate_shap_artifacts(model, shap_sample, name, model_shap_dir)
+        console.print(f"       Saved SHAP analysis: [dim]{model_shap_dir}/[/dim]")
 
-    shap_sample = X.sample(5000, random_state=RANDOM_SEED)
-    plot_shap_importance(best_model, shap_sample, best_name)
+        # Save Model
+        joblib.dump(model, MODELS_DIR / f"{safe_name}.pkl")
+        console.print("\n")
 
-    # ── Ablation study ───────────────────────────────────────
-    phase("Phase 4D: Ablation study")
-    ablation_sample = df.sample(min(100_000, len(df)), random_state=RANDOM_SEED)
-    y_abl = ablation_sample[TARGET_COL]
-
-    ablation_df = run_ablation_study(
-        model_class=lgb.LGBMClassifier,
-        df=ablation_sample,
-        y=y_abl,
-        model_kwargs={"n_estimators": 200, "random_state": RANDOM_SEED, "verbose": -1},
-    )
-
-    # ── Error analysis ───────────────────────────────────────
-    phase("Phase 4E: Error analysis")
-    run_error_analysis(
-        df=df,
-        y_true=y.values,
-        y_prob=model_probs[best_name],
-        threshold=best_threshold,
-        model_name=best_name,
-    )
-
-    # ── Save production model ─────────────────────────────────
-    production = {
-        "model": ensemble,
-        "threshold": best_threshold,
-        "features": FEATURE_COLS,
-        "best_single": best_name,
-        "cv_results": results,
-    }
-    joblib.dump(production, MODELS_DIR / "production_model.pkl")
-    phase("Final Summary")
-
-    logger.info("FINAL MODEL COMPARISON")
-    for name, res in sorted(
-        results.items(), key=lambda x: x[1]["cv"]["roc_auc_mean"], reverse=True
-    ):
-        cv = res["cv"]
-        logger.info(
-            f"{name:<25} AUC={cv['roc_auc_mean']:.4f}±{cv['roc_auc_std']:.4f} F1={cv['f1_mean']:.4f}"
-        )
-
+    # ── 3. Pipeline Conclusion ───────────────────────────────
+    console.print(Panel(
+        f"[bold green]PIPELINE COMPLETE[/bold green]\n"
+        f"All models trained and artifacts generated.\n"
+        f"Best Performer: [bold cyan]{best_model_name}[/bold cyan] (AUC: {best_auc:.4f})",
+        expand=False
+    ))
 
 if __name__ == "__main__":
     main()

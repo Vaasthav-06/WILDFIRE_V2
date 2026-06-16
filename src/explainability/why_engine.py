@@ -70,58 +70,38 @@ FEATURE_TEMPLATES = {
         "risk_up": "Extreme atmospheric dryness (VPD {value:.2f} kPa) stressing vegetation",
         "risk_down": "Low vapour pressure deficit (VPD {value:.2f} kPa) — conditions not critically dry",
     },
-    "kbdi_approx": {
-        "risk_up": "Severe drought conditions (KBDI {value:.0f}/800) — soil moisture critically depleted",
-        "risk_down": "Adequate soil moisture (KBDI {value:.0f}/800) — recent rainfall limiting risk",
-    },
-    "ndvi_proxy": {
-        "risk_up": "Dry, sparse vegetation (NDVI {value:.2f}) — high fuel load",
-        "risk_down": "Dense, moist vegetation (NDVI {value:.2f}) — lower fuel flammability",
-    },
-    "elevation": {
-        "risk_up": "Elevated terrain ({value:.0f}m) with steep slopes accelerating uphill spread",
-        "risk_down": "Low-elevation flat terrain ({value:.0f}m) limiting topographic spread",
-    },
-    "dist_road_km": {
-        "risk_up": "Close to road network ({value:.1f}km) — higher human ignition risk",
-        "risk_down": "Remote location ({value:.1f}km from roads) — lower human ignition risk",
-    },
     "vpd_wind": {
         "risk_up": "Combined fire weather index elevated (VPD × wind = {value:.2f}) — dangerous spread conditions",
         "risk_down": "Combined fire weather index low (VPD × wind = {value:.2f}) — spread potential limited",
     },
-    "temp_dryness": {
-        "risk_up": "Heat-drought compound stress ({value:.2f}) — extreme fuel curing conditions",
-        "risk_down": "Moderate heat-drought index ({value:.2f}) — not critically stressed",
+    "elevation_m": {
+        "risk_up": "Elevated terrain ({value:.0f}m) accelerating uphill fire spread",
+        "risk_down": "Low-elevation flat terrain ({value:.0f}m) limiting topographic spread",
     },
-    "month_sin": {
-        "risk_up": "Seasonal timing consistent with peak fire season",
-        "risk_down": "Seasonal timing not aligned with peak fire season",
+    "lc_tree_cover": {
+        "risk_up": "Dense forest canopy providing high continuous fuel loads",
+        "risk_down": "Forest cover typically maintains higher sub-canopy humidity",
     },
-    "month_cos": {
-        "risk_up": "Seasonal timing consistent with peak fire season",
-        "risk_down": "Seasonal timing not aligned with peak fire season",
+    "lc_cropland": {
+        "risk_up": "Agricultural zone highly susceptible to post-harvest residue burning",
+        "risk_down": "Active cropland with irrigation maintaining fuel moisture",
     },
-    "eco_tropical_moist": {
-        "risk_up": "Tropical moist forest ecoregion — fire-sensitive vegetation type",
-        "risk_down": "Tropical moist forest — typically high humidity limits fire risk",
+    "lc_grassland": {
+        "risk_up": "Open grassland enabling rapid, wind-driven fire spread",
+        "risk_down": "Sparse grassland limiting sustained fire intensity",
     },
-    "eco_tropical_dry": {
-        "risk_up": "Tropical dry forest ecoregion — high fire season susceptibility",
-        "risk_down": "Tropical dry forest — outside peak burn window",
+    "lc_shrubland": {
+        "risk_up": "Dense shrubland providing volatile ladder fuels",
+        "risk_down": "Scrub environment lacking heavy timber fuels",
     },
-    "eco_semi_arid": {
-        "risk_up": "Semi-arid scrubland — chronically low fuel moisture",
-        "risk_down": "Semi-arid conditions — sparse fuel load limiting fire size",
+    "lc_built_up": {
+        "risk_up": "Urban interface increasing risk of human-caused ignition",
+        "risk_down": "Urban infrastructure fragmenting continuous vegetative fuel",
     },
-    "eco_montane": {
-        "risk_up": "Montane terrain — complex fire behaviour in steep slopes",
-        "risk_down": "Montane terrain — higher elevation conditions currently moderate",
-    },
-    "eco_subtropical": {
-        "risk_up": "Subtropical dry forest — fire-prone during dry season",
-        "risk_down": "Subtropical zone — conditions currently within safe range",
-    },
+    "evi": {
+        "risk_up": "Dry, sparse vegetation profile (EVI {value:.2f}) — high fuel load",
+        "risk_down": "Dense, moist vegetation (EVI {value:.2f}) — lower fuel flammability",
+    }
 }
 
 

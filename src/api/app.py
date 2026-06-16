@@ -204,18 +204,8 @@ class Predict24hRequest(BaseModel):
 
 class Predict7dayRequest(BaseModel):
     area: Optional[CustomAreaRequest] = None
-    baseline_kbdi: Optional[List[float]] = Field(
-        None,
-        description=(
-            "Current KBDI per grid cell [n_cells]. "
-            "If null, uses 200.0 (moderate drought) as conservative default. "
-            "For accuracy, pass actual KBDI values from recent training data."
-        ),
-    )
     include_spread: bool = Field(True, description="Compute spread vectors")
-    include_explanation: bool = Field(
-        False, description="Run WHY engine (expensive for 7 days)"
-    )
+    include_explanation: bool = Field(False, description="Run WHY engine (expensive for 7 days)")
     min_prob_geojson: float = Field(0.15)
 
 
@@ -615,30 +605,15 @@ async def predict_cell(
         "longitude": lon,
         "forecast_day": forecast_days,
         "forecast_date": (
-            str(
-                scored.get("forecast_date", pd.Series([date.today().isoformat()])).iloc[
-                    0
-                ]
-            )
-            if "forecast_date" in scored.columns
-            else date.today().isoformat()
+            str(scored.get("forecast_date", pd.Series([date.today().isoformat()])).iloc[0])
+            if "forecast_date" in scored.columns else date.today().isoformat()
         ),
         "weather": {
-            "temp_c": json.loads(
-                json.dumps(float(row.get("temp", np.nan)), cls=NanSafeEncoder)
-            ),
-            "humidity_pct": json.loads(
-                json.dumps(float(row.get("humidity", np.nan)), cls=NanSafeEncoder)
-            ),
-            "wind_ms": json.loads(
-                json.dumps(float(row.get("wind", np.nan)), cls=NanSafeEncoder)
-            ),
-            "vpd_kpa": json.loads(
-                json.dumps(float(row.get("vpd", np.nan)), cls=NanSafeEncoder)
-            ),
-            "kbdi": json.loads(
-                json.dumps(float(row.get("kbdi_approx", np.nan)), cls=NanSafeEncoder)
-            ),
+            "temp_c": json.loads(json.dumps(float(row.get("temp", np.nan)), cls=NanSafeEncoder)),
+            "humidity_pct": json.loads(json.dumps(float(row.get("humidity", np.nan)), cls=NanSafeEncoder)),
+            "wind_ms": json.loads(json.dumps(float(row.get("wind", np.nan)), cls=NanSafeEncoder)),
+            "vpd_kpa": json.loads(json.dumps(float(row.get("vpd", np.nan)), cls=NanSafeEncoder)),
+            "elevation_m": json.loads(json.dumps(float(row.get("elevation_m", np.nan)), cls=NanSafeEncoder)),
         },
         **explanation,
     }

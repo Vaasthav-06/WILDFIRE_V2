@@ -170,6 +170,7 @@ def scored_df_to_geojson(
             top_reason = reasons[0][:100] if reasons else None  # cap at 100 chars
             confidence = expl.get("model_confidence", "HIGH")
 
+        # Inside scored_df_to_geojson(), around line 123
         props = {
             "cell_id": cid,
             "fire_prob": round(prob, 4),
@@ -184,13 +185,23 @@ def scored_df_to_geojson(
             "spread_intensity": spread_intensity,
             "forecast_date": forecast_date,
             "forecast_day": forecast_day,
-            # Weather snapshot for tooltip
             "temp_c": _safe_float(row.get("temp")),
             "humidity_pct": _safe_float(row.get("humidity")),
             "wind_ms": _safe_float(row.get("wind")),
             "vpd_kpa": _safe_float(row.get("vpd")),
-            "kbdi": _safe_float(row.get("kbdi_approx")),
+            "elevation_m": _safe_float(row.get("elevation_m")), # Changed from kbdi
         }
+
+# Inside render_folium_map(), around line 363
+        tooltip_html = (
+            f"<b>P(Fire): {prob:.1%}</b> [{tier.upper()}]<br>"
+            f"Confidence: {confidence}<br>"
+            f"Temp: {row.get('temp', 'N/A')}°C | "
+            f"Wind: {row.get('wind', 'N/A')} m/s<br>"
+            f"VPD: {row.get('vpd', 'N/A'):.2f} kPa | "
+            f"Elev: {row.get('elevation_m', 'N/A'):.0f} m<br>" # Changed from kbdi
+            f"<i>{top_reason}</i>"
+        )
 
         features.append(
             {
@@ -461,7 +472,7 @@ def render_folium_map(
             f"Temp: {row.get('temp', 'N/A')}°C | "
             f"Wind: {row.get('wind', 'N/A')} m/s<br>"
             f"VPD: {row.get('vpd', 'N/A'):.2f} kPa | "
-            f"KBDI: {row.get('kbdi_approx', 'N/A'):.0f}<br>"
+            f"Elev: {row.get('elevation_m', 'N/A'):.0f} m<br>" # Changed from kbdi
             f"<i>{top_reason}</i>"
         )
 
