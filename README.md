@@ -2,132 +2,107 @@
 
 A machine learning pipeline that predicts where wildfires are likely to happen across India — before they do. By learning from 8 years of satellite and climate data, it gives communities and responders an early warning on fire risk.
 
-**Spatial CV AUC: 0.97 | Temporal AUC (2023→2024): 0.97**
-
----
+**Test Temporal AUC (2025 Unseen Data): 0.9611 | Top Model: XGBoost**
 
 ## 🎯 What Does This Project Do?
 
-We want to help people stay prepared. Given today's weather conditions, the platform:
+We want to help people stay prepared. Given today's weather conditions and local topography, the platform:
 
-- Predicts next-day wildfire probability at **0.1° grid resolution** across India
-- Outputs a **risk score (0–1)** per grid cell, a **risk tier** (Low / Moderate / High / Extreme), and a **fire spread direction vector** for high-risk zones
-- Plots everything on an **interactive React dashboard** so the danger zones are easy to understand at a glance
-
----
+- Predicts next-day wildfire probability at **0.1° grid resolution** across India.
+- Outputs a **risk score (0–1)** per grid cell, a **risk tier** (Low / Moderate / High / Extreme), and an indicative **fire spread direction vector** for high-risk zones.
+- Explains *why* an area is at risk using a SHAP-powered natural language engine (The **WHY Engine**).
+- Plots everything on an **interactive React dashboard** so the danger zones are easy to understand at a glance.
 
 ## 📊 Where Do We Get Our Data?
 
-To train our models, we used information from trusted scientific sources:
+To train our models, we used high-fidelity, physics-based information from trusted scientific sources:
 
 | Source | What it tells us | Coverage |
 |---|---|---|
 | NASA FIRMS (VIIRS S-NPP C2) | Exactly when and where past wildfires happened | 2018–2025 |
-| ERA5 (ECMWF via CDS) | Temperature, humidity, wind, VPD, precipitation before and during fires | 2018–2025 |
-| MODIS MOD13A3.061 (NASA AppEEARS) | Vegetation health (EVI index at 1km monthly) | 2018–2025 |
+| ERA5 (ECMWF via CDS) | Temperature, humidity, wind, and VPD before and during fires | 2018–2025 |
+| MODIS MOD13A3.061 | Vegetation health (EVI index) to measure live fuel dryness | 2018–2025 |
+| SRTM & ESA WorldCover | Physical elevation and land cover types via virtual raster mapping | Static |
 | Open-Meteo Forecast API | Live weather for real-time inference | Real-time |
-
----
 
 ## 🧠 How It Works
 
 We built a few different AI models to see which one is smartest at finding fires. Here's the step-by-step process:
 
-**1. Learning from the Past** — We feed the models lots of historical data. They learn that hot, dry, and windy days usually mean a higher chance of fire.
+**1. Learning from the Past** — We feed the models over 9.4 million rows of historical data. They learn that dry fuel (EVI), high elevation gradients, and extreme fire weather (VPD × Wind) mean a higher chance of fire.
 
-**2. Smart Feature Engineering** — We don't just hand the model raw weather numbers. We compute 15 carefully chosen features:
+**2. Smart Feature Engineering** — We don't just hand the model raw numbers. We compute specific, physics-informed features:
 
-- **Ecoregion** — 5 binary zone flags (tropical moist, tropical dry, semi-arid, montane, subtropical)
-- **Temporal** — cyclical month encoding (sin/cos) so the model understands seasonality
-- **Weather** — temperature, humidity, wind speed, VPD (Vapor Pressure Deficit)
-- **Drought** — KBDI (Keetch-Byram Drought Index), computed per cell from ERA5
-- **Vegetation** — MODIS EVI (real satellite values, not proxies)
-- **Interactions** — VPD × wind, temperature × normalised KBDI
+- **Temporal** — Cyclical month encoding (sin/cos) so the model understands seasonality.
+- **Weather** — Temperature, humidity, wind speed, and VPD (Vapor Pressure Deficit).
+- **Topography & Fuel** — SRTM Elevation (meters) and MODIS EVI (real satellite greenery values).
+- **Land Cover** — ESA WorldCover one-hot encoded categorical classes.
+- **Interactions** — VPD × Wind (combined fire spread potential index).
 
-**3. Testing the Models** — We evaluate using **5-fold Spatial Block CV** (4° × 4° geographic blocks with a 0.5° buffer to prevent spatial leakage) and a strict **temporal holdout** (train ≤ 2023, test ≥ 2024). This makes sure our models are genuinely good at predicting fires everywhere and across time — not just memorising the training data.
+**3. Testing the Models (Temporal Holdout)** — To ensure our models aren't just "memorizing" the map, we use a strict **Temporal Split**. We train the models on years 2018–2024 and test them entirely on unseen future data from 2025. This proves the system actually understands fire physics, not just geography.
 
-**4. The Best Models Win** — We trained five models and combined the top three into a soft-voting ensemble:
+**4. The Best Models Win** — We trained five models. After rigorous out-of-time testing and SHAP diagnostic analysis, **XGBoost** emerged as our production champion, perfectly balancing spatial topography with dynamic weather triggers and catching 96% of true fire events.
 
-| Model | Spatial CV AUC | Temporal AUC | Recall |
+| Model | Accuracy | Recall (Safety) | Temporal ROC-AUC |
 |---|---|---|---|
-| Logistic Regression (baseline) | 0.9621 ± 0.011 | 0.9612 | 0.932 |
-| Random Forest | 0.9700 ± 0.010 | 0.9729 | 0.952 |
-| XGBoost | 0.9714 ± 0.009 | 0.9746 | 0.952 |
-| CatBoost | 0.9711 ± 0.009 | 0.9743 | 0.950 |
-| LightGBM | 0.9713 ± 0.009 | — | — |
-| **Ensemble (top 3)** | — | **~0.975** | — |
+| **XGBoost (Production Winner)** | 0.9014 | **0.9607** | **0.9611** |
+| LightGBM | 0.9001 | 0.9274 | 0.9585 |
+| Random Forest | 0.8908 | 0.8769 | 0.9584 |
+| CatBoost | 0.8976 | 0.9296 | 0.9560 |
+| Logistic Regression (Baseline) | 0.8258 | 0.8645 | 0.8968 |
 
+## 💻 Interactive Dashboard & API
 
----
+Reading numbers can be boring, so we built a visual ecosystem!
 
-## 🖥️ Interactive Dashboard
+- **FastAPI Backend** (`src/api/app.py`): Our live inference engine serves 24-hour and 7-day risk grids, computes spread directions, and generates human-readable explanations for high-risk zones.
+- `predict_tomorrow.py` calls the **Open-Meteo live weather API** and generates a `predictions.geojson` file.
+- The **React Dashboard** (inside `wildfire-react-dashboard/`) reads the GeoJSON and plots danger zones, risk tiers, and spread arrows on an interactive map.
 
-Reading numbers can be boring, so we built a visual dashboard!
+## 💡 Key Design Decisions
 
-- `predict_tomorrow.py` calls the **Open-Meteo live weather API** and generates a `predictions.geojson` file
-- `run_prediction.py` runs the same pipeline offline with synthetic weather for testing
-- The **React Dashboard**  reads the GeoJSON and plots danger zones on an interactive map
+**Date-Conditional Negative Sampling:** This is the secret to the model's accuracy. Instead of pulling random "no-fire" coordinates from random days, negatives are drawn from confirmed non-fire cells on the *exact same dates* as fire events, matched to the same ERA5 weather grid. This forces the model to learn the actual *weather signal* of a fire day versus a non-fire day in the same season, rather than just learning "summer = fire."
 
----
+**Strict Temporal Validation:** Trained strictly on ≤ 2024 data and tested on 2025 data. The fact that the model maintains a ~0.96 AUC on a future year confirms it generalizes across time and physics, completely preventing spatial data leakage.
+
+**Virtual Raster Tiles (VRT):** To map local land cover without exhausting RAM, we stitched 17 fragmented ESA Landcover `.tif` tiles into a tiny, memory-efficient XML virtual map, allowing instantaneous geospatial sampling across 9.4 million rows.
+
+**The "WHY" Engine:** Instead of handing first responders raw SHAP values, the pipeline uses a template engine to translate Shapley vectors into ranked, natural language sentences (e.g., *"Extreme atmospheric dryness (VPD 4.2 kPa) stressing vegetation"*).
 
 ## 📁 Project Structure
 
 ```
 wildfire_v2/
 ├── data/
-│   ├── raw/               # FIRMS CSVs, ERA5 NetCDF, MODIS EVI NetCDF
-│   └── processed/         # training_data.csv, training_features.csv
-├── models/                # Saved .pkl files + production_model.pkl
-├── results/
-│   ├── figures/           # ROC, PR, confusion matrices, SHAP, reliability
-│   └── metrics/           # cv_results.json, classification_report.csv
+│   ├── raw/                  # FIRMS CSVs, ERA5 NetCDF, SRTM, ESA VRT
+│   └── processed/            # training_data.csv, training_features.csv
+├── models/                   # Saved .pkl files + production_model.pkl
+├── outputs/
+│   ├── model_evaluation/     # ROC, PR, confusion matrices
+│   └── shap_analysis/        # Global importance & dependence plots
 ├── scripts/
-│   ├── merge_firms.py          # Merge 2018-2023 + 2024-2026 FIRMS CSVs
-│   ├── download_era5.py        # One-time ERA5 download via CDS API
-│   ├── build_training_data.py  # FIRMS + ERA5 + negative sampling → training_data.csv
-│   ├── build_features.py       # Feature engineering → training_features.csv
-│   └── train_models.py         # Train, evaluate, save all models
+│   ├── build_training_data.py    # FIRMS + ERA5 + Negative Sampling
+│   ├── create_spatial_vrt.py     # Builds virtual landcover index
+│   ├── extract_real_features.py  # Samples rasters + Feature engineering
+│   └── train_models.py           # Temporal split, train, eval, save
 ├── src/
-│   ├── config.py               # All paths, feature list, constants
-│   ├── data/
-│   │   ├── era5.py             # ERA5 download + local lookup
-│   │   ├── evi.py              # MODIS EVI lookup (cftime-aware)
-│   │   ├── nasa_firms.py       # FIRMS ingestion + landmass filter
-│   │   └── negative_sampling.py # Date-conditional true-absence sampling
-│   ├── features/
-│   │   └── engineering.py      # KBDI, ecoregion, interactions, full pipeline
-│   ├── models/
-│   │   ├── cross_validation.py # SpatialBlockCV with Fold 4 diagnostics
-│   │   ├── train.py            # Training loop, temporal validation, ensemble
-│   │   └── evaluate.py         # ROC, PR, confusion matrices, SHAP, ablation
-│   └── inference/
-│       ├── engine.py           # WildfireInferenceEngine (predict_now / 7day)
-│       └── forecast_ingest.py  # Open-Meteo live weather fetch
-├── predict_tomorrow.py    # Run live 7-day prediction → GeoJSON
+│   ├── config.py              # All paths, feature lists, constants
+│   ├── data/                  # NASA FIRMS, ERA5, EVI lookup, Sampling
+│   ├── features/               # Cyclical encoding, interactions
+│   ├── models/                 # Evaluation utilities
+│   ├── spread/                 # Wind/Slope spread vector direction
+│   ├── explainability/         # The WHY Engine (SHAP -> Text)
+│   └── inference/              # WildfireInferenceEngine + Open-Meteo ingest
+├── predict_tomorrow.py    # Runs live inference -> GeoJSON for UI
 └── run_prediction.py      # Offline test with synthetic weather
 ```
-
----
-
-## 💡 Key Design Decisions
-
-**Negative sampling** uses date-conditional true-absence: negatives are drawn from confirmed non-fire cells on the *same dates* as fire events, matched to the same ERA5 weather grid. This forces the model to learn weather signal rather than just seasonal patterns — a genuinely hard problem.
-
-**Spatial block CV** uses 4° × 4° geographic blocks with a 0.5° buffer zone to prevent spatial leakage between train and test. This is stricter than random CV and gives more honest AUC estimates.
-
-**Temporal validation** trains strictly on ≤ 2023 data and tests on ≥ 2024 data. The fact that temporal AUC matches spatial CV AUC confirms the model generalises across time, not just space.
-
----
 
 ## 🚀 Future Steps
 
 We're always looking to make this better! In the future, we plan to:
 
-- Add forest cover data to improve predictions in densely vegetated regions
-- Make the map grid even finer and faster to refresh
-- Expand beyond India to other fire-prone regions in South and Southeast Asia
+- Calibrate the model's precision against massive real-world class imbalance (fires are rare compared to non-fires in a live grid).
+- Integrate deeper fire perimeter simulations (like FARSITE) beyond our current indicative spread arrows.
+- Expand beyond India to other fire-prone regions in South and Southeast Asia.
 
 Inspired by the need to protect our environment and communities.
-
----
-
