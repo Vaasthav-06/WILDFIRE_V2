@@ -5,6 +5,13 @@ import requests
 from datetime import date, timedelta
 from loguru import logger
 from typing import Optional
+import json
+
+# In-memory weather cache (same-day same-cell lookups)
+# Key format: "lat_lon_YYYY-MM-DD", Value: peak temp, humidity, wind, wind_u, wind_v, vpd
+_WEATHER_CACHE = {}
+_WEATHER_CACHE_DATE = None
+
 
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 CHUNK_SIZE = 50
@@ -87,10 +94,34 @@ def fetch_24h_forecast(grid_df: pd.DataFrame) -> pd.DataFrame:
     n = len(lats)
 
     filled = 0
-    for i in range(0, n, CHUNK_SIZE):
-        chunk_lats = lats[i : i + CHUNK_SIZE]
-        chunk_lons = lons[i : i + CHUNK_SIZE]
-        chunk_idx = grid_df.index[i : i + CHUNK_SIZE]
+    today_str = date.today().isoformat()
+    
+    global _WEATHER_CACHE, _WEATHER_CACHE_DATE
+    if _WEATHER_CACHE_DATE != today_str:
+        _WEATHER_CACHE.clear()
+        _WEATHER_CACHE_DATE = today_str
+
+    # Find which cells need fetching
+    fetch_indices = []
+    for i in range(n):
+        key = f"{round(lats[i],4)}_{round(lons[i],4)}_{today_str}"
+        if key in _WEATHER_CACHE:
+            c = _WEATHER_CACHE[key]
+            result.at[grid_df.index[i], "temp"] = c["temp"]
+            result.at[grid_df.index[i], "humidity"] = c["humidity"]
+            result.at[grid_df.index[i], "wind"] = c["wind"]
+            result.at[grid_df.index[i], "wind_u"] = c["wind_u"]
+            result.at[grid_df.index[i], "wind_v"] = c["wind_v"]
+            filled += 1
+        else:
+            fetch_indices.append(i)
+
+    # Fetch only needed
+    for idx_chunk in range(0, len(fetch_indices), CHUNK_SIZE):
+        chunk_fetch_indices = fetch_indices[idx_chunk : idx_chunk + CHUNK_SIZE]
+        chunk_lats = [lats[i] for i in chunk_fetch_indices]
+        chunk_lons = [lons[i] for i in chunk_fetch_indices]
+        chunk_idx = [grid_df.index[i] for i in chunk_fetch_indices]
 
         responses = _fetch_hourly_forecast_chunk(chunk_lats, chunk_lons, forecast_hours=24)
         if not responses: continue
@@ -119,9 +150,22 @@ def fetch_24h_forecast(grid_df: pd.DataFrame) -> pd.DataFrame:
                 result.at[idx, "wind_u"] = float(wu[0])
                 result.at[idx, "wind_v"] = float(wv[0])
                 filled += 1
+                
+                # Update Cache
+                if _WEATHER_CACHE_DATE == date.today().isoformat():
+                    _WEATHER_CACHE[f"{round(chunk_lats[j],4)}_{round(chunk_lons[j],4)}_{_WEATHER_CACHE_DATE}"] = {
+                        "temp": round(peak_temp, 2),
+                        "humidity": round(min_hum, 2),
+                        "wind": round(peak_wind, 3),
+                        "wind_u": float(wu[0]),
+                        "wind_v": float(wv[0]),
+                    }
+                    
             except Exception:
                 continue
-        time.sleep(0.15)
+                
+        # Smaller sleep for small grids to speed up KMTR lookup
+        time.sleep(0.05 if n <= 250 else 0.15)
 
     valid = result["temp"].notna() & result["humidity"].notna()
     result.loc[valid, "vpd"] = _compute_vpd(result.loc[valid, "temp"].values, result.loc[valid, "humidity"].values)
@@ -180,10 +224,19 @@ def fetch_7day_forecast(grid_df: pd.DataFrame) -> list[pd.DataFrame]:
 
     return daily_frames
 
-def build_india_inference_grid(resolution: float = 0.1) -> pd.DataFrame:
+def build_inference_grid(
+    lat_min: float = None, lat_max: float = None, 
+    lon_min: float = None, lon_max: float = None, 
+    resolution: float = 0.1
+) -> pd.DataFrame:
     from src.config import INDIA_BOUNDS
-    lats = np.arange(INDIA_BOUNDS["lat_min"], INDIA_BOUNDS["lat_max"], resolution)
-    lons = np.arange(INDIA_BOUNDS["lon_min"], INDIA_BOUNDS["lon_max"], resolution)
+    if lat_min is None: lat_min = INDIA_BOUNDS["lat_min"]
+    if lat_max is None: lat_max = INDIA_BOUNDS["lat_max"]
+    if lon_min is None: lon_min = INDIA_BOUNDS["lon_min"]
+    if lon_max is None: lon_max = INDIA_BOUNDS["lon_max"]
+    
+    lats = np.arange(lat_min, lat_max, resolution)
+    lons = np.arange(lon_min, lon_max, resolution)
     grid_rows = [{"latitude": round(float(la), 4), "longitude": round(float(lo), 4)} for la in lats for lo in lons]
     grid = pd.DataFrame(grid_rows)
     grid["cell_id"] = grid["latitude"].astype(str) + "_" + grid["longitude"].astype(str)

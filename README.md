@@ -53,11 +53,11 @@ We built a few different AI models to see which one is smartest at finding fires
 
 ## 💻 Interactive Dashboard & API
 
-Reading numbers can be boring, so we built a visual ecosystem!
+Reading numbers can be boring, so we built a unified visual ecosystem!
 
-- **FastAPI Backend** (`src/api/app.py`): Our live inference engine serves 24-hour and 7-day risk grids, computes spread directions, and generates human-readable explanations for high-risk zones.
-- `predict_tomorrow.py` calls the **Open-Meteo live weather API** and generates a `predictions.geojson` file.
-- The **React Dashboard** (inside `wildfire-react-dashboard/`) reads the GeoJSON and plots danger zones, risk tiers, and spread arrows on an interactive map.
+- **FastAPI Backend** (`src/api/`): A highly modularized Python backend handling live inference (`predictions`), Fire Risk Index mapping (`analytics`), active NASA FIRMS sync (`firms`), grounded LLM RAG processing (`chatbot`), and ML-validated activity approvals (`permits`).
+- **Node.js API Gateway** (`wildfire-gateway-node/`): A secure gateway handling user authentication, request routing, and bridging the frontend to the internal ML services.
+- **React Dashboard** (`frontend/`): A responsive, interactive SPA that plots real-time risk tiers, EVI canopy health, live NASA fire overlays, spread vectors, and provides a conversational RAG assistant to stakeholders.
 
 ## 💡 Key Design Decisions
 
@@ -73,28 +73,25 @@ Reading numbers can be boring, so we built a visual ecosystem!
 
 ```
 wildfire_v2/
+├── frontend/                 # React web application (Risk Map, Chatbot, Analytics)
+├── wildfire-gateway-node/    # Express.js API Gateway (Auth & Routing)
 ├── data/
 │   ├── raw/                  # FIRMS CSVs, ERA5 NetCDF, SRTM, ESA VRT
 │   └── processed/            # training_data.csv, training_features.csv
 ├── models/                   # Saved .pkl files + production_model.pkl
-├── outputs/
-│   ├── model_evaluation/     # ROC, PR, confusion matrices
-│   └── shap_analysis/        # Global importance & dependence plots
 ├── scripts/
-│   ├── build_training_data.py    # FIRMS + ERA5 + Negative Sampling
-│   ├── create_spatial_vrt.py     # Builds virtual landcover index
-│   ├── extract_real_features.py  # Samples rasters + Feature engineering
+│   ├── build_inference_cache.py  # Builds spatial parquet cache
 │   └── train_models.py           # Temporal split, train, eval, save
 ├── src/
-│   ├── config.py              # All paths, feature lists, constants
-│   ├── data/                  # NASA FIRMS, ERA5, EVI lookup, Sampling
+│   ├── api/                    # FastAPI Microservices
+│   │   ├── routes/             # Modular API endpoints (predictions, analytics, chatbot, permits, firms)
+│   │   ├── cache.py            # Region-aware, state-machine driven caching
+│   │   └── app.py              # Lightweight FastAPI shell
+│   ├── data/                   # NASA FIRMS sync, EVI lookup, ERA5
 │   ├── features/               # Cyclical encoding, interactions
-│   ├── models/                 # Evaluation utilities
-│   ├── spread/                 # Wind/Slope spread vector direction
 │   ├── explainability/         # The WHY Engine (SHAP -> Text)
+│   ├── risk/                   # Unified Fire Risk Index (FRI) logic
 │   └── inference/              # WildfireInferenceEngine + Open-Meteo ingest
-├── predict_tomorrow.py    # Runs live inference -> GeoJSON for UI
-└── run_prediction.py      # Offline test with synthetic weather
 ```
 
 ## 🚀 Future Steps

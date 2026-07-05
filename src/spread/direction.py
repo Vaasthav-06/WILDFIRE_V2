@@ -29,6 +29,7 @@ import numpy as np
 import pandas as pd
 from loguru import logger
 from typing import Optional
+from scipy.ndimage import generic_filter
 
 # ── Wind speed thresholds for dynamic α/β weighting ─────────────────────────
 # Below CALM_THRESHOLD: slope dominates (α=0.35, β=0.65)
@@ -58,9 +59,6 @@ def _magnitude_to_intensity(mag: float) -> str:
     return "extreme"
 
 
-from scipy.ndimage import generic_filter
-
-
 def _fill_nan_grid(grid: np.ndarray) -> np.ndarray:
     """Fill NaN with mean of available 3×3 neighbourhood, then global mean."""
     filled = grid.copy()
@@ -87,10 +85,8 @@ def compute_elevation_gradient(
 ) -> pd.DataFrame:
     df = grid_df.copy()
 
-    if "elevation" not in df.columns:
-        from src.features.engineering import _elevation_proxy
-
-        df["elevation"] = _elevation_proxy(df["latitude"], df["longitude"])
+    if "elevation_m" not in df.columns:
+        raise ValueError("Missing 'elevation_m'. Ensure real spatial extraction ran.")
 
     lats = np.sort(df["latitude"].unique())
     lons = np.sort(df["longitude"].unique())
@@ -106,7 +102,7 @@ def compute_elevation_gradient(
 
     elev_grid = np.full((n_lat, n_lon), np.nan)
 
-    # FIX: Vectorized numpy indexing instead of .iterrows() loops
+    # Vectorized numpy indexing instead of .iterrows() loops
     lat_idx = np.clip(
         np.searchsorted(lats, df["latitude"].round(4).values), 0, n_lat - 1
     )
@@ -114,9 +110,9 @@ def compute_elevation_gradient(
         np.searchsorted(lons, df["longitude"].round(4).values), 0, n_lon - 1
     )
 
-    elev_grid[lat_idx, lon_idx] = df["elevation"].values
+    elev_grid[lat_idx, lon_idx] = df["elevation_m"].values
 
-    # FIX: 2D Interpolation for missing data
+    # 2D Interpolation for missing data
     elev_grid = _fill_nan_grid(elev_grid)
 
     grad_y, grad_x = np.gradient(elev_grid, dy_m, dx_m)
@@ -173,7 +169,7 @@ def compute_spread_vectors(
     Args:
         scored_df:       Output from WildfireInferenceEngine._score().
                          Must contain: fire_prob, wind_u, wind_v,
-                         latitude, longitude, elevation (optional).
+                         latitude, longitude, elevation_m (optional).
         risk_threshold:  Minimum P(fire) to compute spread for.
 
     Returns:

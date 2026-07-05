@@ -27,7 +27,8 @@ def main():
     grid_df = sample_raster(grid_df, srtm_path, "elevation_m")
     
     logger.info("Step 3: Sampling ESA WorldCover Land Cover...")
-    esa_path = DATA_RAW / "esa_landcover_india.tif"
+    # FIX: Pointing to the .vrt (Virtual Raster Tile) instead of .tif
+    esa_path = DATA_RAW / "esa_landcover_india.vrt"
     grid_df = sample_raster(grid_df, esa_path, "raw_landcover_code")
     
     for code, col_name in ESA_CLASSES.items():
@@ -43,6 +44,7 @@ def main():
     
     # Save the cache
     out_path = DATA_CACHE / "india_spatial_grid.parquet"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     grid_df.to_parquet(out_path, index=False)
     logger.info(f"Success! Spatial grid cached → {out_path}")
 

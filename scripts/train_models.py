@@ -32,6 +32,7 @@ from src.config import (
     FEATURE_COLS,
     TARGET_COL,
     RANDOM_SEED,
+    RISK_THRESHOLD_HIGH  # Added to package into the production model
 )
 from src.models.evaluate_utils import calculate_metrics, generate_evaluation_artifacts, generate_shap_artifacts
 
@@ -44,12 +45,12 @@ def get_models():
     """Define the exact models to be trained."""
     return {
         "Logistic Regression": Pipeline([
-            ('imputer', SimpleImputer(strategy='median')), # <-- ADDED IMPUTER
+            ('imputer', SimpleImputer(strategy='median')),
             ('scaler', StandardScaler()), 
             ('lr', LogisticRegression(random_state=RANDOM_SEED, max_iter=1000, class_weight='balanced'))
         ]),
         "Random Forest": Pipeline([
-            ('imputer', SimpleImputer(strategy='median')), # <-- ADDED IMPUTER PIPELINE
+            ('imputer', SimpleImputer(strategy='median')),
             ('rf', RandomForestClassifier(n_estimators=200, random_state=RANDOM_SEED, class_weight='balanced', n_jobs=-1))
         ]),
         "XGBoost": XGBClassifier(
@@ -101,13 +102,12 @@ def main():
     X_test = df.loc[test_mask, FEATURE_COLS]
     y_test = df.loc[test_mask, TARGET_COL]
     
-    # Optional: Delete the train_test_split import at the top of the file if you like a clean workspace
-    
     console.print(f"[bold yellow][INFO][/bold yellow] Features: {len(FEATURE_COLS)} | Train rows: {len(X_train):,} | Test rows: {len(X_test):,}\n")
 
     models = get_models()
     best_auc = 0
     best_model_name = ""
+    best_model = None
     
     # ── 2. Train & Evaluate Loop ─────────────────────────────
     for name, model in models.items():
@@ -131,9 +131,11 @@ def main():
         metrics = calculate_metrics(y_test, y_pred, y_prob)
         print_metrics_table(metrics)
         
+        # Keep track of the best performing model
         if metrics["ROC-AUC"] > best_auc:
             best_auc = metrics["ROC-AUC"]
             best_model_name = name
+            best_model = model
 
         # Generate Artifacts
         console.print(f"[bold yellow][INFO][/bold yellow] Generating evaluation plots...")
@@ -150,11 +152,25 @@ def main():
         joblib.dump(model, MODELS_DIR / f"{safe_name}.pkl")
         console.print("\n")
 
-    # ── 3. Pipeline Conclusion ───────────────────────────────
+    # ── 3. Pipeline Conclusion & Production Export ──────────
+    console.print(f"[bold yellow][INFO][/bold yellow] Packaging best model ({best_model_name}) for production...")
+    
+    production_bundle = {
+        "model": best_model,
+        "threshold": RISK_THRESHOLD_HIGH,
+        "features": FEATURE_COLS,
+        "best_single": best_model_name,
+        "cv_results": {}
+    }
+    
+    joblib.dump(production_bundle, MODELS_DIR / "production_model.pkl")
+    console.print(f"       Saved production bundle: [dim]{MODELS_DIR / 'production_model.pkl'}[/dim]")
+
     console.print(Panel(
         f"[bold green]PIPELINE COMPLETE[/bold green]\n"
         f"All models trained and artifacts generated.\n"
-        f"Best Performer: [bold cyan]{best_model_name}[/bold cyan] (AUC: {best_auc:.4f})",
+        f"Best Performer: [bold cyan]{best_model_name}[/bold cyan] (AUC: {best_auc:.4f})\n"
+        f"Production Model Saved Successfully!",
         expand=False
     ))
 

@@ -1,0 +1,33 @@
+# Data & Models
+
+/data/
+/models/
+/catboost_info/
+
+# Logs, Outputs, & Results
+
+/logs/
+/outputs/
+/results/
+
+# Environments & Cache
+
+/pycache/
+.venv/
+*.pyc
+*.pyo
+
+# Specific Non-Code Project Files
+
+directory.txt
+dashboard.html
+repomix-output.xml
+
+# Large Asset Extensions
+
+*.geojson
+*.tif
+*.nc
+*.csv
+*.png
+*.svg

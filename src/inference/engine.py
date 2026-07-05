@@ -1,6 +1,7 @@
 import joblib
 import numpy as np
 import pandas as pd
+import time
 from pathlib import Path
 from loguru import logger
 from typing import Optional, Union
@@ -13,10 +14,11 @@ from src.config import (
     RISK_THRESHOLD_CRITICAL,
 )
 from src.features.engineering import build_features
+from src.data.evi import EVILookup
 from src.inference.forecast_ingest import (
     fetch_24h_forecast,
     fetch_7day_forecast,
-    build_india_inference_grid,
+    build_inference_grid,
 )
 
 RISK_TIERS = {
@@ -57,19 +59,47 @@ class WildfireInferenceEngine:
 
         self.grid_resolution = grid_resolution
         self._inference_grid = None
+        self._kmtr_grid = None
+        
+        # Initialize EVILookup handle for feature compilation
+        self.evi_lookup = EVILookup()
 
-    def get_inference_grid(self) -> pd.DataFrame:
+    def get_inference_grid(self, area: Optional[dict] = None) -> pd.DataFrame:
+        is_kmtr = False
+        if area:
+            # Check if this is the KMTR region (approx)
+            if abs(area.get("lat_min", 0) - 8.35) < 0.1 and abs(area.get("lon_min", 0) - 77.15) < 0.1:
+                is_kmtr = True
+        
+        if is_kmtr:
+            if self._kmtr_grid is None:
+                self._kmtr_grid = build_inference_grid(
+                    lat_min=area["lat_min"], lat_max=area["lat_max"], 
+                    lon_min=area["lon_min"], lon_max=area["lon_max"], 
+                    resolution=area.get("resolution", 0.05)
+                )
+                logger.info("Generated and cached KMTR-specific inference grid.")
+            return self._kmtr_grid.copy()
+            
         if self._inference_grid is None:
             cache_path = DATA_CACHE / "india_spatial_grid.parquet"
             if cache_path.exists():
                 self._inference_grid = pd.read_parquet(cache_path)
                 logger.info(f"Loaded spatial cache from {cache_path}")
             else:
-                raise FileNotFoundError(
-                    f"Spatial cache missing: {cache_path}. "
-                    "Run `python scripts/build_inference_cache.py` first."
-                )
-        return self._inference_grid.copy()
+                logger.warning(f"Spatial cache missing: {cache_path}. Building India grid...")
+                self._inference_grid = build_inference_grid()
+                
+        grid = self._inference_grid.copy()
+        if area:
+            grid = grid[
+                (grid["latitude"] >= area["lat_min"]) &
+                (grid["latitude"] <= area["lat_max"]) &
+                (grid["longitude"] >= area["lon_min"]) &
+                (grid["longitude"] <= area["lon_max"])
+            ]
+            
+        return grid
 
     def _validate_feature_schema(self, X: pd.DataFrame) -> pd.DataFrame:
         missing = [f for f in self.features if f not in X.columns]
@@ -84,10 +114,14 @@ class WildfireInferenceEngine:
                 X_ordered[col].fillna(X_ordered[col].median(), inplace=True)
         return X_ordered
 
-    def _score(self, df_enriched: pd.DataFrame) -> pd.DataFrame:
-        # Note: EVI is already injected from the spatial cache
-        df_featured = build_features(df_enriched, use_elevation_api=False)
+    def _score(self, df_enriched: pd.DataFrame, profiler: dict = None) -> pd.DataFrame:
+        t0 = time.time()
+        # FIX: Pass the instantiated self.evi_lookup object to build_features
+        df_featured = build_features(df_enriched, evi_lookup=self.evi_lookup)
         X = self._validate_feature_schema(df_featured)
+        if profiler is not None:
+            profiler["feature_eng_s"] = time.time() - t0
+            t0 = time.time()
 
         fire_prob = self.model.predict_proba(X)[:, 1]
         model_std = self._compute_model_disagreement(X)
@@ -97,6 +131,21 @@ class WildfireInferenceEngine:
         df_result["fire_pred"] = (fire_prob >= self.threshold).astype(int)
         df_result["risk_tier"] = [_prob_to_tier(p) for p in fire_prob]
         df_result["model_std"] = np.round(model_std, 4)
+        
+        # Compute FRI
+        try:
+            from src.risk.fire_risk_index import compute_fri
+            fri_df = compute_fri(df_featured)
+            df_result["fri"] = fri_df["fri"]
+            df_result["fri_tier"] = fri_df["fri_tier"]
+        except Exception as e:
+            logger.error(f"Failed to compute FRI: {e}")
+            df_result["fri"] = np.nan
+            df_result["fri_tier"] = None
+        
+        
+        if profiler is not None:
+            profiler["xgboost_s"] = time.time() - t0
 
         return df_result
 
@@ -114,11 +163,14 @@ class WildfireInferenceEngine:
         except Exception:
             return np.zeros(len(X))
 
-    def predict_now(self, grid_df: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+    def predict_now(self, grid_df: Optional[pd.DataFrame] = None, profiler: dict = None) -> pd.DataFrame:
         if grid_df is None:
             grid_df = self.get_inference_grid()
+        t0 = time.time()
         df_weather = fetch_24h_forecast(grid_df)
-        return self._score(df_weather)
+        if profiler is not None:
+            profiler["open_meteo_s"] = time.time() - t0
+        return self._score(df_weather, profiler=profiler)
 
     def predict_7day(self, grid_df: Optional[pd.DataFrame] = None) -> list[pd.DataFrame]:
         if grid_df is None:

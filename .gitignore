@@ -1,12 +1,46 @@
-﻿data/
-models/
-results/
-catboost_info/
-logs/
-.venv/
-venv/
+# Python
 __pycache__/
-*.xml
+*.py[cod]
+*.so
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+
+# Environment
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# Data (large files — keep in local only)
+data/raw/
+data/processed/
+data/cache/
+
+# Models (keep production_model.pkl tracked, ignore massive experimental models)
+models/*.pkl
+!models/production_model.pkl
+
+# Test scripts
+test_*.py
+
+# Build artifacts
+catboost_info/
+repomix-output.xml
 *.log
-*.nc
-*.csv
+
+# Node
+node_modules/
+package-lock.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Outputs
+outputs/
+results/
+logs/
