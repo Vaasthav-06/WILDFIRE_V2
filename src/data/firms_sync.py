@@ -53,7 +53,11 @@ def fetch_recent_firms_data(days: int = 2) -> pd.DataFrame:
         logger.info(f"Fetched {len(df)} active fire alerts.")
         
         # Ensure we have standard columns
+        df.columns = [c.lower() for c in df.columns]
         if 'latitude' in df.columns and 'longitude' in df.columns:
+            from src.data.nasa_firms import _confidence_frp_filter
+            df = _confidence_frp_filter(df)
+
             # Add fetched timestamp for cache invalidation logic
             df['fetched_at'] = datetime.now().isoformat()
             return df

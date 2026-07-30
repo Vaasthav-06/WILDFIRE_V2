@@ -61,6 +61,12 @@ class WildfireInferenceEngine:
         self._inference_grid = None
         self._kmtr_grid = None
         
+        # Log the resolved model type for observability
+        self._model_type = self._production.get(
+            "model_type", type(self.model).__name__
+        )
+        logger.info(f"Production model type: {self._model_type}")
+        
         # Initialize EVILookup handle for feature compilation
         self.evi_lookup = EVILookup()
 
@@ -150,15 +156,37 @@ class WildfireInferenceEngine:
         return df_result
 
     def _compute_model_disagreement(self, X: pd.DataFrame) -> np.ndarray:
+        """
+        Estimate model disagreement (std-dev of per-member probabilities).
+        Handles:
+          - VotingClassifier:   iterates named_estimators_ (all base models)
+          - StackingClassifier: iterates estimators_ (base models only,
+            excluding the final meta-learner) to keep semantics consistent
+          - Single model:       returns zero array (no disagreement)
+        """
         try:
+            from sklearn.ensemble import StackingClassifier as _SC
+
             if hasattr(self.model, "named_estimators_"):
                 individual_probs = []
-                for name, estimator in self.model.named_estimators_.items():
-                    if hasattr(estimator, "predict_proba"):
-                        p = estimator.predict_proba(X)[:, 1]
-                        individual_probs.append(p)
+
+                if isinstance(self.model, _SC):
+                    # StackingClassifier: use estimators_ (base layer only)
+                    # to exclude the final LogisticRegression meta-learner.
+                    for estimator in self.model.estimators_:
+                        if hasattr(estimator, "predict_proba"):
+                            p = estimator.predict_proba(X)[:, 1]
+                            individual_probs.append(p)
+                else:
+                    # VotingClassifier (and any other ensemble with named_estimators_)
+                    for name, estimator in self.model.named_estimators_.items():
+                        if hasattr(estimator, "predict_proba"):
+                            p = estimator.predict_proba(X)[:, 1]
+                            individual_probs.append(p)
+
                 if len(individual_probs) > 1:
                     return np.std(np.column_stack(individual_probs), axis=1)
+
             return np.zeros(len(X))
         except Exception:
             return np.zeros(len(X))
@@ -188,11 +216,22 @@ class WildfireInferenceEngine:
         return self._score(df_weather)
 
     def summary(self) -> dict:
+        """
+        Return a summary of the loaded production model.
+        Backward-compatible: reads 'model_type' from the new bundle schema;
+        falls back to the raw class name for bundles created before this change.
+        """
         best_cv = self.cv_results.get(self.best_name, {}).get("cv", {})
         return {
-            "model_type": type(self.model).__name__,
-            "best_single": self.best_name,
-            "threshold": self.threshold,
-            "n_features": len(self.features),
-            "cv_auc_mean": best_cv.get("roc_auc_mean"),
+            "model_type":   self._model_type,
+            "best_single":  self.best_name,   # backward-compat alias
+            "threshold":    self.threshold,
+            "n_features":   len(self.features),
+            "cv_auc_mean":  best_cv.get("roc_auc_mean"),
+            # New diagnostic fields (present only in bundles generated after this change)
+            "train_auc":      self._production.get("train_auc"),
+            "test_auc":       self._production.get("test_auc"),
+            "overfit_flag":   self._production.get("overfit_flag"),
+            "underfit_flag":  self._production.get("underfit_flag"),
+            "suspicious_flag":self._production.get("suspicious_flag"),
         }

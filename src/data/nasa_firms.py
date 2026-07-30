@@ -28,7 +28,7 @@ OCEAN_EXCLUSIONS = [
     {"lat_max": 10, "lon_min": 80.0},  # Southern tip
 ]
 
-REQUIRED_COLS = {"latitude", "longitude", "acq_date", "acq_time", "confidence"}
+REQUIRED_COLS = {"latitude", "longitude", "acq_date", "acq_time", "confidence", "frp"}
 
 
 def _vectorised_landmass_filter(df: pd.DataFrame) -> pd.Series:
@@ -49,6 +49,37 @@ def _vectorised_landmass_filter(df: pd.DataFrame) -> pd.Series:
     is_ocean = arabian_sea | bay_of_bengal | southern_tip
 
     return in_bounds & ~is_ocean
+
+
+def _confidence_frp_filter(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Filter FIRMS data by detection confidence and Fire Radiative Power (FRP).
+    - Confidence: retain 'n' (nominal) and 'h' (high), drop 'l' (low)
+    - FRP: retain frp >= 1.0 MW (standard operational floor)
+    
+    Agricultural Burning Note (Task 3):
+    This system retains agricultural fires (e.g. Punjab/Haryana stubble burning in
+    Oct-Nov and Apr-May) as legitimate positives, rather than masking the IGP zone.
+    The rationale is that the model functions as an all-cause fire risk system,
+    and agricultural fires still pose particulate and spread risks.
+    """
+    if df.empty:
+        return df
+
+    # Confidence filter
+    if "confidence" in df.columns:
+        valid_conf = {"n", "h", "nominal", "high"}
+        mask_conf = df["confidence"].astype(str).str.lower().isin(valid_conf)
+        df = df[mask_conf]
+        logger.info(f"Rows after confidence filter (dropped low): {len(df)}")
+        
+    # FRP filter
+    if "frp" in df.columns:
+        df["frp"] = pd.to_numeric(df["frp"], errors="coerce")
+        df = df[df["frp"] >= 1.0]
+        logger.info(f"Rows after FRP filter (>= 1.0): {len(df)}")
+        
+    return df.reset_index(drop=True)
 
 
 def fetch_live_firms(
@@ -118,6 +149,9 @@ def fetch_live_firms(
     df = df[mask].reset_index(drop=True)
     logger.info(f"Rows after India landmass filter: {len(df)}")
 
+    # ── Confidence and FRP filter ─────────────────────────────
+    df = _confidence_frp_filter(df)
+
     if save:
         out = DATA_RAW / "firms_live.csv"
         df.to_csv(out, index=False)
@@ -147,5 +181,8 @@ def load_historical_firms(path: Path) -> pd.DataFrame:
     mask = _vectorised_landmass_filter(df)
     df = df[mask].reset_index(drop=True)
     logger.info(f"Historical rows after filter: {len(df):,}")
+
+    # ── Confidence and FRP filter ─────────────────────────────
+    df = _confidence_frp_filter(df)
 
     return df

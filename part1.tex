@@ -1,0 +1,72 @@
+\documentclass[11pt]{article}
+
+% ── Page layout ──────────────────────────────────────────────────────────────
+\usepackage[a4paper, margin=1in]{geometry}
+
+% ── Fonts and encoding ───────────────────────────────────────────────────────
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+
+% ── Mathematics ──────────────────────────────────────────────────────────────
+\usepackage{amsmath}
+\usepackage{amssymb}
+
+% ── Tables ───────────────────────────────────────────────────────────────────
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+
+% ── Graphics and figures ─────────────────────────────────────────────────────
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{tikz}
+\usetikzlibrary{shapes.geometric, arrows.meta, positioning}
+
+% ── Hyperlinks ───────────────────────────────────────────────────────────────
+\usepackage{hyperref}
+\usepackage{textcomp}
+
+\graphicspath{{paper_figures/}}
+
+\title{Robust Wildfire Risk Prediction Across India via Date-Conditional Negative Sampling and Explainable Stacking Ensembles}
+\author{}
+\date{}
+
+\begin{document}
+\sloppy
+
+\maketitle
+
+\section*{Abstract}
+
+A common problem with machine learning for wildfire prediction is that naively trained models tend to memorize seasonal weather patterns rather than learning the actual environmental conditions that cause fires. To solve this, we introduce \textbf{date-conditional negative sampling}. This approach pairs every actual fire event with non-fire examples drawn from the exact same calendar date. By doing this, we force the model to differentiate between fire and non-fire locations that share the exact same broad weather context. Our controlled experiments demonstrate that this method prevents the model from relying on seasonal shortcuts, resulting in much more stable predictive performance year-round.
+
+To apply this practically, we built a next-day wildfire risk prediction system specifically for India. We needed comprehensive historical context, so we aggregated eight years of satellite data from 2018 to 2025 across several distinct sources. For our ground truth on fire events, we use NASA FIRMS (VIIRS S-NPP, Collection 2). We then provide the weather context using ERA5, vegetation health from MODIS, and structural land features from SRTM and ESA WorldCover. Altogether, this pipeline generated 9.4 million labeled training examples across both space and time.
+
+To find the best approach, we evaluated five base classifiers: Logistic Regression, Random Forest, LightGBM, CatBoost, and XGBoost. We also built Voting and Stacking ensembles on top of them. Because we need the model to work reliably in the future, we evaluate all models using a strict time-based holdout—training on data from 2018 to 2023, and testing on 2024 to 2025 data that the models never saw during training. Ultimately, we deployed the Stacking Ensemble because it achieved the best precision (0.8937) and the highest AUC across our ensemble configurations. Since standard ensemble models often produce uncalibrated scores, we apply Isotonic Regression post-calibration to the raw probability outputs. This step is critical because it reduces the Expected Calibration Error by 67.7\%, meaning the final scores can be trusted as true fire probabilities rather than just relative rankings.
+
+Because raw predictions aren't enough for operational use, we use SHAP to understand exactly why the model makes its decisions. We analyze feature importance at a national level, as well as broken down across six distinct ecological zones in India. Through this analysis, we show how the interaction between Vapor Pressure Deficit (VPD) and EVI creates a clear non-linear fire-risk threshold that neither variable captures alone. We also ran a feature ablation study to quantify the value of each data source. This confirmed that combining the fuel stack (EVI and elevation) with the meteorological data provides the strongest signal. Finally, to make these insights actionable, we wrapped the entire system in a FastAPI inference backend and a React-based geospatial dashboard that visualizes daily risk maps.
+
+\section*{Introduction}
+
+Roughly a quarter of India's land is covered by forests and natural vegetation. These ecosystems are highly valuable, both as large-scale carbon sinks and as critical resources for millions of people's livelihoods. However, these areas are experiencing an increasing number of wildfires. This trend is largely driven by climate change, prolonged droughts, existing agricultural burning practices, and rugged terrain that makes containment extremely difficult once a fire starts. Because temperature and rainfall patterns across India are shifting, fire seasons are becoming longer. Furthermore, changes in the monsoon cycle are creating extended dry periods, causing vegetation to lose moisture and become highly flammable. The core problem is that once a fire actually ignites, it spreads incredibly fast. The resulting damage—including biodiversity loss, degraded soil, carbon emissions, and ruined watersheds—scales much faster than the time it takes for emergency teams to respond. Because fires outpace containment efforts, predicting them \textit{before} they happen is essential.
+
+The primary engineering challenge in wildfire management is not detecting a fire that is already burning; existing satellite systems like NASA FIRMS handle detection reliably. The real difficulty lies in anticipating where fires will start days in advance. To do this, we need to pinpoint specific locations that are most likely to ignite given the current weather forecasts, the dryness of the local vegetation, and the underlying terrain structure. Machine learning is a strong fit for this problem because it can automatically map the complex, non-linear relationships between weather inputs (like temperature, humidity, wind, and vapor pressure deficit), vegetation health (using EVI as an indicator for live-plant moisture), static terrain factors (like elevation and slope), and historical fire occurrences. This approach makes sense physically because fire ignition behaves like a threshold rather than a linear gradient. Once conditions pass a specific critical point, tiny shifts in the weather can drastically change the probability of a fire, and tree-based machine learning models are fundamentally designed to detect exactly these types of non-linear thresholds.
+
+A major hurdle when training models for this task is dealing with extreme class imbalance. Because fires are relatively rare events, on any given day, less than 0.1\% of grid cells actually catch fire. If we sample the training data naively, the model gets overwhelmed by negative examples. To address this, we rely on date-conditional negative sampling. Instead of picking random non-fire locations across the whole dataset, we specifically sample our ``non-fire'' training examples from areas that did not burn on the exact same date—and therefore under the same broad weather conditions—as an actual fire event. This constraint forces the model to look past obvious seasonal indicators and learn the precise, localized differences that actually distinguish a fire-prone cell from a safe one.
+
+In summary, this paper combines several practical engineering approaches to build a reliable prediction system: (1) we use a strict train/test split separated by time, ensuring we only evaluate performance on genuinely unseen future data; (2) we implement the date-conditional negative sampling method to manage class imbalance and prevent seasonal memorization; (3) we engineer features heavily based on established fire science, focusing specifically on the weather, vegetation, and terrain variables known to drive ignition; and (4) we systematically compare five standard classifiers, as well as Voting and Stacking ensembles, to measure exactly how much value non-linear modeling and ensembling provide over a simple baseline.
+
+\textbf{Our main contributions:}
+
+\begin{itemize}
+    \item We aggregated a massive training dataset containing 9.4 million samples across an eight-year span (2018--2025). We joined NASA FIRMS fire detections, ERA5 weather data, MODIS vegetation indices, and static terrain and land-cover information from SRTM and ESA WorldCover. This ensures that every individual training example contains the complete environmental context necessary to determine if a fire will start.
+    \item We developed a date-conditional negative sampling method. By explicitly matching non-fire training examples to the exact same calendar dates as real fires, we directly handle class imbalance while forcing the model to learn the genuine physical relationships between fire and weather, rather than memorizing seasonal shortcuts.
+    \item We evaluated five diverse classifiers—Logistic Regression (providing a simple, interpretable baseline), Random Forest, LightGBM, CatBoost, and XGBoost—using our strict time-based data split. We then combined these base predictors into Voting and Stacking ensembles, eventually selecting the best-performing configuration to serve as our production model.
+    \item We implemented an explanation layer using SHAP to translate complex model predictions into clear, natural-language insights. This ensures the output is actionable and easily understood by on-the-ground forest management teams, rather than just by data scientists.
+    \item We engineered a complete end-to-end system, featuring an interactive map-based dashboard. This interface visualizes daily wildfire risk across India, displaying categorical risk tiers, localized feature importance breakdowns, and estimated fire spread directions derived from wind and terrain data.
+\end{itemize}
+
+\noindent The rest of the paper is structured logically to explain this pipeline. Section 2 details our methodology, covering our data sources, feature engineering logic, the negative sampling strategy, model architectures, and the overall system workflow. Section 3 presents our experimental results and key findings. Finally, Section 4 concludes the paper and outlines our planned next steps.

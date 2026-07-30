@@ -15,6 +15,7 @@ MODELS_DIR = ROOT_DIR / os.getenv("MODELS_DIR", "models")
 OUTPUTS_DIR = ROOT_DIR / "outputs"
 EVAL_DIR = OUTPUTS_DIR / "model_evaluation"
 SHAP_DIR = OUTPUTS_DIR / "shap_analysis"
+COMPARISON_DIR = OUTPUTS_DIR / "model_comparison"
 LOGS_DIR = ROOT_DIR / "logs"
 
 # ── Ensure dirs exist ────────────────────────────────────────
@@ -26,6 +27,7 @@ for _dir in [
     OUTPUTS_DIR,
     EVAL_DIR,
     SHAP_DIR,
+    COMPARISON_DIR,
     LOGS_DIR,
 ]:
     _dir.mkdir(parents=True, exist_ok=True)

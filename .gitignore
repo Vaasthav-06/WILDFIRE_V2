@@ -1,46 +1,90 @@
-# Python
+# ==============================================================================
+# WILDFIRE_V2 GITIGNORE
+# Only keep source code & scripts tracked in GitHub. Exclude heavy models, data,
+# evaluation image outputs, binaries, and environment files.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. Models & Heavy Weights
+# ------------------------------------------------------------------------------
+models/
+*.pkl
+*.bin
+*.pt
+*.pth
+*.onnx
+*.joblib
+*.h5
+*.keras
+
+# ------------------------------------------------------------------------------
+# 2. Data & Databases
+# ------------------------------------------------------------------------------
+data/
+db/
+*.csv
+*.tif
+*.tiff
+*.nc
+*.geojson
+*.parquet
+*.h5
+*.gpkg
+
+# ------------------------------------------------------------------------------
+# 3. Images, Figures & Plots
+# ------------------------------------------------------------------------------
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.ico
+*.webp
+paper_figures/
+outputs/
+results/
+
+# ------------------------------------------------------------------------------
+# 4. Large Asset Documents, Binaries & Repomix Packs
+# ------------------------------------------------------------------------------
+*.pdf
+*.msi
+*.exe
+*.zip
+*.tar.gz
+*.7z
+*.xml
+catboost_info/
+
+# ------------------------------------------------------------------------------
+# 5. Environments, Dependencies & Build Artifacts
+# ------------------------------------------------------------------------------
+venv/
+.venv/
+env/
 __pycache__/
 *.py[cod]
 *.so
 *.egg-info/
 dist/
 build/
-venv/
-.venv/
-
-# Environment
-.env
-
-# IDE
-.vscode/
-.idea/
-
-# Data (large files — keep in local only)
-data/raw/
-data/processed/
-data/cache/
-
-# Models (keep production_model.pkl tracked, ignore massive experimental models)
-models/*.pkl
-!models/production_model.pkl
-
-# Test scripts
-test_*.py
-
-# Build artifacts
-catboost_info/
-repomix-output.xml
-*.log
-
-# Node
 node_modules/
 package-lock.json
 
-# OS
+# ------------------------------------------------------------------------------
+# 6. Environment & Secret Keys
+# ------------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+
+# ------------------------------------------------------------------------------
+# 7. IDE & OS Junk
+# ------------------------------------------------------------------------------
+.vscode/
+.idea/
 .DS_Store
 Thumbs.db
-
-# Outputs
-outputs/
-results/
+*.log
 logs/

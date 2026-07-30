@@ -1,0 +1,311 @@
+\section{Materials and Methods}
+
+\subsection{Data Description and Integration Strategy}
+
+To build a robust prediction model, we integrated five distinct datasets. We selected each dataset because it provides a specific, scientifically validated signal about what drives wildfires. Table~\ref{tab:data_sources} outlines each source, its coverage, and our physical reasoning for including it.
+
+\begin{longtable}{|p{2.8cm}|p{3.6cm}|p{1.8cm}|p{3.9cm}|}
+\caption{Data Sources and Scientific Integration Rationale}
+\label{tab:data_sources}\\
+\hline
+\textbf{Data Source} & \textbf{Variables Provided} & \textbf{Coverage} & \textbf{Rationale} \\
+\hline
+\endfirsthead
+\hline
+\textbf{Data Source} & \textbf{Variables Provided} & \textbf{Coverage} & \textbf{Rationale} \\
+\hline
+\endhead
+NASA FIRMS (VIIRS S-NPP, C2) & Active fire detections (confidence and radiative power) & 2018--2025 & Ground truth for fire occurrence and validation \\
+\hline
+ERA5 Reanalysis & 2m temperature, humidity, wind speed, vapor pressure deficit & 2018--2025, $0.25 \times 0.25$ grid & Physics-driven weather context; consistent interpolation across topographically complex terrain \\
+\hline
+MODIS EVI & Enhanced Vegetation Index (monthly composites) & 2018--2025 & Live-fuel moisture proxy; disentangles green vegetation from soil background \\
+\hline
+SRTM / ESA WorldCover & Elevation (m), terrain slope, land-cover class & Static & Terrain controls fire spread rate, fuel moisture retention, and vegetation composition \\
+\hline
+Open-Meteo API & 24h / 7-day weather forecasts (temperature, humidity, wind) & Real-time & Operational inference; enables next-day and weekly risk visualization \\
+\hline
+\end{longtable}
+
+\noindent
+\subsubsection{Fire Occurrence Ground Truth}
+
+For the ground truth on exactly where and when fires occurred, we use NASA FIRMS' VIIRS S-NPP Collection 2 active-fire product, covering 2018 to 2025. This satellite system detects active fires globally roughly every 12 hours. Because we need high-quality labels, we exclusively retain detections with a ``nominal'' or ``high'' confidence score (dropping ``low'' confidence detections). In addition, we apply a strict Fire Radiative Power (FRP) threshold, retaining only detections with $\text{FRP} \ge 1.0$ MW. This threshold serves as a standard operational floor to ensure we only train on significant thermal anomalies. Furthermore, we explicitly discard any cloudy days from our dataset. If we kept them, we would risk labeling a cloudy day as ``no fire'' simply because the satellite's view was blocked, which would inject false negatives into our training data.
+
+A critical design decision in our system is the retention of agricultural burning (such as stubble burning in the Indo-Gangetic Plains during October--November and April--May). Rather than masking out these zones, we intentionally retain these detections as legitimate positives. The rationale is that our model functions as an all-cause fire risk system; agricultural fires still present significant particulate pollution and pose serious spread risks to adjacent vegetation and infrastructure. By including them, the system learns the conditions under which these anthropogenic fires are most likely to ignite and escalate.
+
+Figure~\ref{fig:seasonal_freq} shows the seasonal pattern of wildfire occurrence across India over the 2018--2025 study period. March and April represent the peak fire months (with 698k and 558k detections, respectively), coinciding with the pre-monsoon dry season when vegetation is heavily dehydrated. As expected, the monsoon season (June--September) drives fire occurrences to near zero due to high humidity and rainfall. A secondary, smaller peak occurs in October--November, caused by post-monsoon drying and agricultural burning in specific regions. This bimodal seasonal behavior is exactly why we use cyclical month encoding and date-conditional negative sampling; we want to prevent the model from learning a trivial seasonal shortcut.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{fig_seasonal_fire_frequency.png}
+    \caption{Monthly wildfire detection frequency across India (2018--2025, NASA FIRMS VIIRS S-NPP Collection 2). March is the peak fire month with 698k detections, driven by the pre-monsoon dry season. The monsoon period (June--September) nearly eliminates fire activity. A secondary peak occurs in October--November due to agricultural burning and post-monsoon drying. This bimodal seasonality motivates the use of cyclical month encoding and date-conditional negative sampling to prevent the model from exploiting trivial seasonal shortcuts.}
+    \label{fig:seasonal_freq}
+\end{figure}
+
+\subsubsection{Meteorological Reanalysis}
+
+For our meteorological context, we rely on ERA5, which is ECMWF's global atmospheric reanalysis dataset. For every grid cell and day, we extract 2m air temperature, 2m relative humidity, 10m wind speed, and vapor pressure deficit (VPD). We compute VPD directly as the gap between the saturated and actual vapor pressure. We chose these specific variables because fire science research consistently links them to ignition probability. Temperature affects fuel drying rates, humidity dictates fuel moisture, wind speed accelerates fire spread by increasing oxygen supply, and VPD serves as a comprehensive metric for plant water stress. Because of this, VPD acts as a stronger fire-weather indicator than raw humidity alone.
+
+\subsubsection{Vegetation Health Indices}
+
+To measure the state of the vegetation, we use MODIS's Enhanced Vegetation Index (EVI), retrieved via NASA's AppEEARS API. We intentionally selected EVI over the more common NDVI because EVI is more sensitive to actual live-canopy greenness, automatically corrects for atmospheric distortions, and is less skewed by background soil in sparsely vegetated regions. EVI values range from -1 to +1. Values near or above 0.3 indicate healthy, actively growing vegetation, while values below 0.2 indicate sparse or stressed vegetation. We use monthly EVI composites at 1km resolution spanning 2018--2025. 
+
+One engineering challenge with MODIS composites is that they are recorded on an 8-day rolling cycle, meaning they do not align cleanly with ERA5's daily timestamps or standard calendar months. To resolve this, we implemented a custom time-alignment function using the \texttt{cftime} library, mapping each MODIS timestamp to its closest corresponding ERA5 daily record.
+
+\subsubsection{Static Topographic and Land-Cover Layers}
+
+To account for structural terrain factors, we incorporate elevation data from the SRTM digital elevation model (at 30m resolution), which we averaged to match our 0.1-degree grid. For land classification, we rely on ESA WorldCover (10m resolution, 2021 snapshot). This dataset classifies land into 11 standardized categories, such as forests, grasslands, croplands, built-up areas, and water bodies.
+
+\subsubsection{Data Integration and Preprocessing}
+
+Once all raw data was retrieved and cleaned, we merged the layers into a unified geospatial database, standardizing everything onto a 0.1-degree grid covering the entirety of India. We selected this specific resolution as an optimal engineering trade-off: it is fine enough to capture critical local variations in fire risk, yet coarse enough that processing 9.4 million samples remains computationally feasible without requiring specialized distributed hardware.
+
+For every grid cell on every specific date, our pipeline executes the following steps: (1) queries FIRMS to check if a fire occurred, (2) extracts the interpolated ERA5 weather variables, (3) aligns and aggregates the MODIS EVI data, (4) appends the static elevation and land-cover values, (5) executes quality control validations, and (6) constructs the final feature vector. Ultimately, this integration yields 9.4 million labeled cell-day records spanning eight years.
+
+\subsection{Feature Engineering and Physics-Informed Design}
+
+We organized our feature engineering into four main categories, directly reflecting established fire science principles.
+
+\subsubsection{Temporal Features}
+
+To help the model interpret seasonal cycles without creating artificial boundary jumps between months, we encode the calendar month using a sine-cosine (cyclical) transformation rather than raw integers. If we used raw numbers, the model would treat January (1) and December (12) as distant values, despite them being adjacent in the seasonal cycle. The cyclical encoding resolves this:
+
+\begin{equation}
+\text{Month\_sin} = \sin\left(\frac{2\pi \cdot \text{Month}}{12}\right)
+\end{equation}
+
+\begin{equation}
+\text{Month\_cos} = \cos\left(\frac{2\pi \cdot \text{Month}}{12}\right)
+\end{equation}
+
+By transforming the data this way, December and January correctly map close to each other in the feature space. This allows our gradient-boosted trees to detect seasonal risk curves smoothly without requiring highly fragmented split rules for each individual month.
+
+\subsubsection{Meteorological Features}
+
+We incorporate four primary weather variables from the ERA5 daily fields: 2m air temperature ($^\circ$C), 2m relative humidity (\%), 10m wind speed (m s$^{-1}$), and vapor pressure deficit (VPD, kPa). Temperature and humidity are classic fire-danger indicators fundamental to systems like the Forest Fire Weather Index. Wind speed is critical because it dictates how rapidly a fire can propagate and how far embers can travel to cause secondary ignitions. Vapor pressure deficit---defined as the difference between saturated and actual vapor pressure---provides a robust measurement of how aggressively the atmosphere is extracting moisture from the local vegetation. Fire ecology studies have repeatedly shown that VPD predicts fire risk more accurately than raw relative humidity because it directly correlates with live fuel moisture depletion.
+
+\medskip
+\paragraph{Calculating VPD.} We derive VPD systematically in three steps. First, we compute the saturation vapor pressure (SVP) from the air temperature using the standard Tetens approximation:
+
+\begin{equation}
+SVP = 0.6108 \times \exp\left(\frac{17.27 \times T}{T + 237.3}\right)
+\end{equation}
+
+where $T$ is air temperature in $^\circ$C, and $SVP$ is expressed in kPa. Next, we determine the actual vapor pressure (AVP) by scaling the SVP using the current relative humidity:
+
+\begin{equation}
+AVP = SVP \times \left(\frac{RH}{100}\right)
+\end{equation}
+
+Finally, we calculate VPD as the numerical difference between the maximum saturation and the actual moisture present:
+
+\begin{equation}
+VPD = SVP - AVP = SVP \times \left(1 - \frac{RH}{100}\right)
+\end{equation}
+
+In engineering terms, SVP represents the maximum moisture capacity of the air at a given temperature, while AVP is the actual moisture present. A larger VPD value implies the atmosphere is highly ``thirsty,'' pulling moisture out of the plants. This physical mechanism perfectly explains why high VPD correlates so strongly with elevated fire risk.
+
+\subsubsection{Topography and Fuel Moisture Proxy Features}
+
+We include two features to describe the fuel and terrain environment: (i) SRTM elevation (m), representing the altitude of the grid cell; and (ii) MODIS EVI, functioning as a proxy for live-vegetation moisture content. Including elevation is logically sound because higher altitudes generally feature lower temperatures and higher humidity, naturally suppressing fire risk. Conversely, lower valley regions often experience strong downslope winds and lower relative humidity, which actively increase fire likelihood. EVI provides a satellite-driven metric for plant hydration. Because active photosynthesis requires internal water, high EVI values correlate strongly with high fuel moisture. During monsoon seasons, EVI peaks and fire risk drops. During extended dry seasons, EVI plummets, signaling an elevated risk of ignition. Feeding EVI directly to the model allows it to learn these fuel-moisture dynamics without requiring ground-based sensor networks, which are highly impractical to deploy across India's massive landmass.
+
+Figure~\ref{fig:evi_dist} empirically supports this reasoning by comparing the EVI distribution between actual fire events and date-matched non-fire examples. Fire occurrences consistently cluster at lower EVI values (median = 0.205), affirming that dehydrated vegetation is highly prone to ignition. Meanwhile, non-fire cells exhibit a broader EVI distribution with a higher concentration in the upper range, indicating that well-hydrated biomass effectively prevents fires even under warm weather conditions.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{fig_evi_distribution_fire_class.png}
+    \caption{MODIS EVI distribution for fire events (red) versus non-fire observations (blue) drawn under date-conditional sampling. Left: violin and box plots showing the interquartile range and median for each class. Right: overlapping kernel density estimates with class medians marked by dashed vertical lines. Fire events cluster at lower EVI values (median~=~0.205), consistent with drier, more flammable vegetation, while non-fire cells extend to higher EVI values indicating well-hydrated live fuel. This separation validates EVI as a meaningful live-fuel moisture proxy and justifies its inclusion in the feature set.}
+    \label{fig:evi_dist}
+\end{figure}
+
+\subsubsection{Land-Cover and Interaction Features}
+
+We process ESA WorldCover's land classifications by applying a one-hot encoding strategy, converting categories (e.g., tree cover, shrubland, grassland, cropland) into distinct binary indicators. This structure allows the model to learn localized fire tendencies based on fuel type. For example, grasslands burn differently than dense forests because their fuel loading, moisture retention, and structural density differ drastically.
+
+To explicitly model how atmospheric drying and wind jointly drive fire spread, we engineer an interaction feature known as the fire-spread potential index (FSP):
+
+\begin{equation}
+FSP = VPD \times W_s
+\end{equation}
+
+where VPD is measured in kPa and $W_s$ is wind speed (m s$^{-1}$). This multiplicative feature combines atmospheric water demand (drying) with oxygen replenishment (wind), both of which are primary drivers of fire spread. Supplying this physics-based interaction term directly to the model reduces the computational burden on the tree algorithms, ensuring they don't have to infer this critical relationship entirely from scratch.
+
+Table~\ref{tab:ablation} provides a systematic feature group ablation study, quantitatively validating our feature selection. To evaluate a group, we replace its corresponding columns with their training-set mean values within the fitted XGBoost model and re-evaluate performance on the held-out 2024--2025 test set. This mean-substitution approach simulates the removal of a feature group without requiring computationally expensive retraining, yielding an accurate estimate of each group's discriminative value.
+
+\begin{table}[H]
+\centering
+\setlength{\tabcolsep}{5pt}
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Feature Group Ablated} & \textbf{ROC-AUC} & \textbf{Recall} & \textbf{$\Delta$AUC} & \textbf{$\Delta$Recall} \\
+\midrule
+\textbf{Full model (baseline)} & 0.9613 & 0.9606 & $-$ & $-$ \\
+Temporal (\texttt{month\_sin}, \texttt{month\_cos}) & 0.9305 & 0.9384 & $-0.0308$ & $-0.0222$ \\
+Meteorology (temp, humidity, wind, VPD) & 0.8910 & 0.9017 & $-0.0703$ & $-0.0588$ \\
+VPD$\times$Wind Interaction (FSP) & 0.9586 & 0.9568 & $-0.0027$ & $-0.0038$ \\
+Vegetation -- EVI & 0.9352 & 0.9789 & $-0.0262$ & $+0.0183$ \\
+Elevation & 0.9153 & 0.8289 & $-0.0460$ & $-0.1317$ \\
+Land Cover (all 11 indicators) & 0.9612 & 0.9606 & $-0.0001$ & $+0.0000$ \\
+Fuel Stack (EVI + Elevation) & 0.8456 & 0.8717 & $-0.1157$ & $-0.0888$ \\
+\midrule
+KBDI (rejected candidate)$^\dagger$ & --- & --- & $\approx 0$ & $\approx 0$ \\
+\bottomrule
+\end{tabular}
+\caption{Feature group ablation study on the held-out 2024--2025 test set, using mean-substitution on the fitted XGBoost model. Each row reports model performance when the corresponding feature group is replaced by training-set column means, simulating the effect of that group being absent (no retraining required). $\Delta$AUC and $\Delta$Recall are relative to the full model baseline (row 1); larger negative values indicate higher group importance. \textbf{Meteorology} (temperature, humidity, wind, VPD) is the single most important group by AUC ($\Delta$AUC $= -0.070$). \textbf{Elevation} is the most critical group for recall ($\Delta$Recall $= -0.132$), consistent with its role as a primary fire-suppressor in the SHAP analysis. Removing the combined \textbf{Fuel Stack} (EVI + Elevation) produces the largest joint drop ($\Delta$AUC $= -0.116$), confirming that terrain and live-fuel moisture together form the core fire-discriminating signal once weather is held constant. \textbf{Land Cover} (11 binary indicators) contributes negligible AUC ($\Delta$AUC $\approx 0$) but is retained for fuel-type context. The \textbf{VPD$\times$Wind} interaction term contributes only marginally on its own, but its physics motivation (fire-spread potential) justifies retention. $^\dagger$KBDI (Keetch--Byram Drought Index) was evaluated as a candidate feature during feature selection but excluded prior to final model training: its atmospheric drought signal was found largely redundant with VPD, and consistent daily precipitation inputs across India's heterogeneous monsoon zones introduced data-quality issues. Removing KBDI from early experiments produced no measurable change in held-out AUC.}
+\label{tab:ablation}
+\end{table}
+
+Figure~\ref{fig:corr_matrix} displays the full Pearson correlation matrix for our finalized feature set. We observe several key relationships that justify our selections. First, VPD exhibits a high positive correlation with temperature ($r = 0.61$) and a strong negative correlation with humidity ($r = -0.66$). This proves that VPD effectively consolidates the effects of temperature and humidity into a single, highly informative metric. Second, elevation is strongly negatively correlated with temperature ($r = -0.87$), VPD ($r = -0.34$), and EVI ($r = -0.54$), properly reflecting the cooler and drier environment at higher altitudes. Despite these correlations, we retain all three features because each provides distinct predictive value. Finally, the land-cover indicators demonstrate near-zero correlation with both the weather and terrain features, confirming that they inject independent information regarding fuel type that isn't captured elsewhere.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.90\textwidth]{fig_feature_correlation_heatmap.png}
+    \caption{Pearson correlation matrix for the retained feature set, computed on a 500k stratified sample of the training data. Strong correlations among weather variables (VPD--Temperature: $r=0.61$; VPD--Humidity: $r=-0.66$) confirm that VPD summarises the joint fire-weather signal. Elevation exhibits strong negative correlations with temperature ($r=-0.87$), VPD ($r=-0.34$), and EVI ($r=-0.54$), motivating its independent retention. Land-cover binary indicators are orthogonal to weather and terrain features, providing fuel-type information not captured by other features.}
+    \label{fig:corr_matrix}
+\end{figure}
+
+\subsection{Date-Conditional Negative Sampling Strategy}
+\label{sec:dcns}
+
+When dealing with severe class imbalance, the method used to generate negative (non-event) training examples fundamentally shapes what the model learns. In our dataset, fire events are extraordinarily rare: on any given calendar date, only about 0.08\% to 0.15\% of the 0.1-degree grid cells experience a fire. This yields an extreme class ratio ranging from 1:600 to 1:1200. If we ignore this imbalance, the model will trivially predict ``no fire'' for every cell, achieving seemingly high accuracy while missing every real fire event entirely.
+
+Table~\ref{tab:sampling_strategies} formally compares three potential sampling strategies. Let $\mathcal{F}$ represent the set of all observed fire events $(i,j,t)$ where $\text{FIRMS}(i,j,t)=1$.
+
+\begin{table}[H]
+\centering
+\setlength{\tabcolsep}{5pt}
+\renewcommand{\arraystretch}{1.35}
+\begin{tabular}{p{3.2cm}p{6.2cm}p{4.5cm}}
+\toprule
+\textbf{Strategy} & \textbf{Formal Negative Set} & \textbf{Shortcut Risk} \\
+\midrule
+Random Uniform (RU) &
+  $N^{\text{RU}}(i,j,t) = \{(i',j',t') : \text{FIRMS}(i',j',t')=0\}$,
+  drawn uniformly over all dates and locations &
+  Model can learn \textit{``winter / monsoon $\Rightarrow$ safe''} by
+  memorising the seasonal fire calendar \\
+\midrule
+Spatial-Only (SO) &
+  $N^{\text{SO}}(i,j,t) = \{(i',j',t') : \text{FIRMS}=0,\;t'\in\text{same month as }t\}$ &
+  Reduces seasonal bias but still exposes within-month weather-regime variation
+  as an exploitable signal \\
+\midrule
+\textbf{Date-Conditional (DC, ours)} &
+  $N^{\text{DC}}(i,j,t) = \{(i',j',t) : \text{FIRMS}(i',j',t)=0,\;(i',j')\neq(i,j)\}$ &
+  Negatives share the \textit{identical} ERA5 snapshot as the paired fire;
+  model is forced to learn local spatial-environmental signal \\
+\bottomrule
+\end{tabular}
+\caption{Formal comparison of three negative sampling strategies for wildfire classification.
+  $\text{FIRMS}(i,j,t)$ is the fire-detection indicator at grid cell $(i,j)$ on date $t$.
+  Only Date-Conditional (DC) sampling eliminates the temporal prior shift that allows
+  classifiers to exploit seasonal shortcuts.}
+\label{tab:sampling_strategies}
+\end{table}
+
+\medskip
+\paragraph{Temporal Leakage Theorem (informal).}
+If we use standard Random-Uniform sampling, the training distribution naturally conflates genuine physical fire signals with simple seasonal shifts. Consequently, the classifier can artificially lower its loss by simply mapping the cyclical month variables $(\texttt{month\_sin},\texttt{month\_cos})$ to the historical fire calendar, completely failing to identify the specific grid cells that are genuinely susceptible to fire. However, by using Date-Conditional sampling, we lock the meteorological context $\mathbf{z}_t$ for a specific date $t$. This isolation forces the model to rely exclusively on the local spatial-environmental signals $\mathbf{x}_{\text{local}}$ (such as vegetation health, elevation, and land cover) to make a discrimination. This localized signal is exactly what we need for a highly calibrated, operational early-warning system.
+
+For our system, we exclusively utilize date-conditional negative sampling. Whenever a fire event is recorded on date $t$ at grid cell $(i, j)$, we intentionally pull our negative examples only from confirmed non-fire cells on that exact same date $t$, ensuring they share the identical ERA5 weather snapshot. Formally, our negative set for a fire event $(i, j, t)$ is defined as:
+
+\begin{equation}
+N(i, j, t) = \{(i', j', t) : \text{FIRMS}(i', j', t) = 0 \text{ and } (i', j') \neq (i, j)\}
+\end{equation}
+
+By implementing this constraint, we prevent the model from exploiting obvious seasonal shortcuts (like simply learning that high-altitude snowfields don't burn). Instead, the model is forced to evaluate which specific combinations of local weather, terrain, and vegetation actively cause an ignition compared to other areas experiencing the exact same regional weather conditions on that given day.
+
+To maintain a balanced training process without destroying the underlying signal, we settled on a sampling ratio between 1:5 and 1:10 (fire to non-fire). This ratio provides enough negative examples to cover diverse non-fire environments while preventing the loss function from collapsing to a trivial majority-class prediction. After applying this sampling technique, our final dataset comprised roughly 1.2 million fire examples and 8.2 million non-fire examples, totaling 9.4 million high-quality training records.
+
+Figure~\ref{fig:sampling_diag} visualizes this date-conditional sampling strategy. For a fire detected on date $t$, the paired negative samples are exclusively drawn from non-fire cells on the same date, anchoring them to the same ERA5 meteorological snapshot. This guarantees the classifier learns the local discriminators (EVI, elevation, land cover) rather than memorizing broad seasonal patterns.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{fig_date_conditional_sampling_diagram.png}
+    \caption{Schematic of the date-conditional negative sampling strategy. For each fire detection (positive sample, red grid cell marked ``F'') on date~$t$, negative examples (non-fire cells on the same date~$t$) are sampled from the same ERA5 meteorological snapshot. The positive sample captures feature conditions at the fire cell; the negative samples capture conditions at non-fire cells under identical regional weather. This design forces the classifier to learn local fire-discriminating signals (EVI, elevation, land cover) rather than exploiting seasonal or weather-regime shortcuts across different dates.}
+    \label{fig:sampling_diag}
+\end{figure}
+
+\subsubsection{Empirical Validation: Date-Conditional vs.\ Random-Uniform Sampling}
+\label{sec:sampling_experiment}
+
+To rigorously prove that Date-Conditional sampling prevents seasonal shortcutting, we conducted a controlled experiment. We trained a baseline XGBoost model using Random-Uniform (RU) sampling, pulling negative examples completely at random across all dates, entirely ignoring when fires occurred. We then compared it against our Date-Conditional (DC) XGBoost model, keeping all hyperparameters identical. Both models were evaluated on the strict 2024--2025 holdout set.
+
+Table~\ref{tab:sampling_experiment} outlines the results. The DC model achieves a notably higher recall (0.9606 versus 0.9291, a +3.1 percentage point gain) while maintaining a comparable AUC. This confirms that the DC approach successfully flags more real fires without sacrificing its core discriminative ability. We also computed the Temporal Bias Score, which measures the correlation between the calendar month and the predicted fire probability. The DC model scored $r = -0.326$, while the RU model scored a stronger $r = -0.340$. The stronger negative correlation in the RU model proves it relies more heavily on the calendar (associating cold months with low risk), clearly demonstrating that it has learned a seasonal shortcut.
+
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{1.25}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lccccc}
+\toprule
+\textbf{Sampling Strategy} & \textbf{ROC-AUC} & \textbf{Recall} & \textbf{Precision} & \textbf{F1} & \textbf{Month--Prob Corr.} \\
+\midrule
+\textbf{Date-Conditional (DC, ours)} & \textbf{0.9613} & \textbf{0.9606} & 0.8602 & \textbf{0.9076} & $-0.326$ \\
+Random-Uniform (RU, baseline)        & 0.9600          & 0.9291          & \textbf{0.8823} & 0.9051 & $-0.340$ \\
+\midrule
+$\Delta$ (DC $-$ RU)                 & $+0.0013$       & $\mathbf{+0.0315}$ & $-0.0221$ & $+0.0025$ & $+0.014$ \\
+\bottomrule
+\end{tabular}%
+}
+\caption{Controlled comparison of Date-Conditional (DC) vs.\ Random-Uniform (RU) negative sampling strategies on the held-out 2024--2025 test set. Both models use XGBoost with identical hyperparameters; only the negative sampling strategy differs. DC achieves significantly higher recall (+3.1 pp), confirming it recovers more true fire events. The smaller absolute value of the month--probability correlation for DC ($|r|=0.326$ vs.\ $0.340$) confirms that the DC model is less dependent on the seasonal prior, i.e.\ it exploits the fire-season calendar shortcut less.}
+\label{tab:sampling_experiment}
+\end{table}
+
+Figure~\ref{fig:sampling_metrics} displays this comparison visually, while Figure~\ref{fig:sampling_monthly} breaks down the critical recall metrics on a month-by-month basis. During the monsoon season (July--September) when fire events naturally plummet, the RU model's recall severely collapses, hitting a low of just 18\% in July. By contrast, the DC model maintains a 34\% recall. The steep collapse of the RU model proves it simply learned to predict ``no fire'' because it is July, rather than evaluating the actual environmental conditions. The DC model demonstrates significantly higher stability year-round because it was trained to understand the physical environment, not just the calendar.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.90\textwidth]{fig_sampling_comparison_metrics.png}
+    \caption{Overall performance comparison between Date-Conditional (DC) and Random-Uniform (RU) negative sampling on the 2024--2025 test set. DC achieves higher recall (+3.1 pp) and F1 at a marginally lower precision, reflecting its more aggressive fire-event detection. The header reports the month--probability Pearson correlation for each model; the higher absolute value for RU ($|r|=0.340$) confirms stronger seasonal shortcut dependency. AUC values are similar (0.961 vs.\ 0.960), confirming that the benefit of DC is concentrated in the operational recall metric rather than ranking alone.}
+    \label{fig:sampling_metrics}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{fig_sampling_monthly_recall.png}
+    \caption{Per-month recall on the 2024--2025 test set for Date-Conditional (DC) and Random-Uniform (RU) sampling. The shaded band marks the peak fire season (March--June), where both models perform similarly. The critical divergence occurs during monsoon months (July--September): the RU model's recall collapses to 18\% in July (vs.\ 34\% for DC) and 29\% in August (vs.\ 43\% for DC). This collapse is the hallmark of seasonal shortcut learning --- the RU model has learned that ``July is not fire season'' rather than discriminating fire-prone from fire-safe cells on any given day. The DC model, by construction forced to learn within-date spatial signals, maintains a substantially more stable recall across all months.}
+    \label{fig:sampling_monthly}
+\end{figure}
+
+\subsection{Algorithms and Model Selection Rationale}
+
+To ensure we found the most effective approach, we evaluated five different supervised classification algorithms as our base models. These range from simple, interpretable linear models to highly complex gradient-boosted trees. We then aggregated these base predictors into two distinct ensemble configurations.
+
+\subsubsection{Logistic Regression (LR)}
+
+We include Logistic Regression to serve as a clean, highly interpretable linear baseline. While simple, LR often provides surprisingly strong performance on tabular data and naturally outputs a clear probabilistic estimation. By establishing this linear baseline, we can definitively measure whether more complex, non-linear algorithms actually provide a meaningful boost in predictive power, or if they are simply overfitting. The learned coefficients also offer immediate engineering insight: positive values directly indicate features that increase fire risk, while negative values indicate suppressive factors.
+
+\subsubsection{Random Forest (RF)}
+
+Random Forest, an ensemble of decision trees, serves as our non-linear baseline. Because it utilizes random feature subsampling and builds trees on random data slices, it naturally handles non-linear relationships and mixed data types (like continuous weather inputs alongside categorical land-cover classes). It is inherently robust to noisy inputs and provides a less aggressive non-linear fit compared to gradient boosting.
+
+\subsubsection{LightGBM}
+
+LightGBM is an advanced, histogram-based gradient boosting framework optimized for speed and memory efficiency when handling massive datasets. Instead of evaluating every possible split point, LightGBM groups continuous features into discrete bins. This engineering optimization drastically reduces memory usage and accelerates training, making it highly effective for our 9.4-million-sample dataset. Furthermore, its native handling of categorical variables allows us to process land-cover classes without manual one-hot encoding overhead.
+
+\subsubsection{CatBoost}
+
+We include CatBoost because it is explicitly designed to handle categorical features with minimal target leakage. By employing an ordered boosting technique---where residuals are calculated on a separate permutation of the data---it aggressively prevents overfitting that commonly arises from standard categorical encodings. CatBoost also generates high-quality permutation-based feature importance scores out-of-the-box, which is highly beneficial for our interpretability pipeline.
+
+\subsubsection{XGBoost}
+
+XGBoost is a highly regularized gradient boosting framework. We utilize it because its built-in L1/L2 regularization heavily penalizes overly complex tree weights, actively preventing overfitting. Its sophisticated learning-rate scheduling ensures the model generalizes exceptionally well to unseen data.
+
+\subsubsection{Ensemble Models}
+
+To maximize predictive stability, we combined the five base classifiers into two distinct ensemble structures:
+
+\begin{itemize}
+    \item \textbf{Voting Ensemble:} A straightforward soft-voting implementation that averages the predicted probabilities across all five base models. This approach reliably smooths out the isolated errors of individual models without introducing the complexity of an additional learning layer.
+    \item \textbf{Stacking Ensemble:} A robust two-level architecture designed to mathematically learn the optimal way to combine the base models:
+    \begin{enumerate}
+        \item \textbf{Level-0 Base Learners:} The five classifiers detailed above.
+        \item \textbf{Level-1 Meta-Learner:} A Logistic Regression model that treats the outputs of the Level-0 classifiers as its inputs. It learns weights indicating which base models to trust most heavily in specific scenarios.
+    \end{enumerate}
+    To strictly prevent overfitting and data leakage, we train the Level-1 meta-learner entirely on out-of-fold predictions using a 5-fold Stratified Cross-Validation over the training set. This engineering safeguard ensures the meta-learner only sees probability scores generated for data points the base models never saw during their own training, effectively stopping the meta-learner from relying on overconfident, overfitted base predictions.
+\end{itemize}
+
+We evaluated both ensembles on the rigorous 2024--2025 test set. Ultimately, the Stacking Ensemble proved to be the most robust architecture and was selected as our final production model.

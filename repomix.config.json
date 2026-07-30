@@ -1,0 +1,16 @@
+{
+  "output": {
+    "filePath": "repomix-output-code.xml",
+    "style": "xml"
+  },
+  "ignore": {
+    "customPatterns": [
+      "frontend/**",
+      "wildfire-gateway-node/**",
+      "wildfire-risk-platform/**",
+      "*.xml",
+      "*.pdf",
+      "*.msi"
+    ]
+  }
+}
