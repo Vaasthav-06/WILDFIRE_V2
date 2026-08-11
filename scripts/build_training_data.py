@@ -33,9 +33,16 @@ def main(input_path: Path) -> None:
     validate_firms(df_raw)
     logger.info(f"Loaded: {len(df_raw):,} fire records")
 
-    phase("Step 2: Weather enrichment (ERA5 Offline)")
+    phase("Step 2: Weather enrichment (ERA5 Offline) — 1-day lag")
+    # CR-3 fix: weather features are fetched from day D-1 relative to the fire
+    # label date D. This implements genuine next-day forecasting: the model sees
+    # yesterday's weather and predicts today's fire risk.
+    # ERA5 data for 2018-01-01 fires will use 2017-12-31 weather → those rows
+    # will get NaN and be dropped by the subsequent dropna().
     era5 = ERA5Lookup(years=[2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025])
-    df_enriched = era5.enrich_dataframe(df_raw, date_col="acq_date", hour=12)
+    df_enriched = era5.enrich_dataframe(
+        df_raw, date_col="acq_date", hour=12, lag_days=1
+    )
     df_enriched = df_enriched.dropna(subset=["temp", "humidity", "wind"])
     validate_enriched(df_enriched)
     logger.info(f"After enrichment: {len(df_enriched):,} rows")
@@ -44,12 +51,15 @@ def main(input_path: Path) -> None:
     df_enriched.to_csv(enriched_path, index=False)
     logger.info(f"Enriched fire records saved → {enriched_path}")
 
-    phase("Step 3: Negative sample generation")
+    phase("Step 3: Negative sample generation — 1-day lag (matching positives)")
+    # weather_lag_days=1 ensures negatives also use D-1 ERA5 weather to predict
+    # day-D no-fire status. The lag is symmetric with the positive enrichment above.
     df_training = build_balanced_dataset(
         df_fire=df_enriched,
         era5_lookup=era5,
         n_negatives=len(df_enriched),
         random_seed=RANDOM_SEED,
+        weather_lag_days=1,
     )
 
     out_path = DATA_PROCESSED / "training_data.csv"

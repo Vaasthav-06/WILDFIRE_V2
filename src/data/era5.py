@@ -177,10 +177,21 @@ class ERA5Lookup:
         df,
         date_col: str = "acq_date",
         hour: int = 12,
+        lag_days: int = 0,
     ):
         """
         Enrich entire DataFrame with ERA5 weather. Groups by date for speed.
         Processes ~1M rows in seconds using fully vectorized xarray indexing.
+
+        Args:
+            df:       DataFrame with at least lat/lon and a date column.
+            date_col: Name of the column containing the event date (fire/no-fire label date).
+            hour:     Hour of the ERA5 snapshot to use (default 12 = midday).
+            lag_days: Number of days to subtract from the label date before
+                      fetching ERA5 data.  With lag_days=1, weather features for
+                      a row whose label date is D are drawn from day D-1,
+                      enabling genuine next-day wildfire risk forecasting.
+                      Default is 0 (same-day, backward-compatible).
         """
         import pandas as pd
         from rich.progress import (
@@ -199,7 +210,11 @@ class ERA5Lookup:
             df[col] = np.nan
 
         grouped = df.groupby(df[date_col].dt.date)
-        logger.info(f"Enriching {len(df):,} rows across {len(grouped)} unique dates...")
+        lag_label = f" (lag={lag_days}d)" if lag_days else ""
+        logger.info(
+            f"Enriching {len(df):,} rows across {len(grouped)} unique dates"
+            f"{lag_label}..."
+        )
 
         with Progress(
             SpinnerColumn(),
@@ -211,7 +226,11 @@ class ERA5Lookup:
             task = progress.add_task("ERA5 enrichment", total=len(grouped))
 
             for date_val, group in grouped:
-                date_str = str(date_val)
+                # Apply weather lag: fetch ERA5 for (label_date - lag_days).
+                # The label date (acq_date) stays unchanged in the DataFrame.
+                import datetime as _dt
+                era5_date = date_val - _dt.timedelta(days=lag_days)
+                date_str = str(era5_date)
                 target = np.datetime64(f"{date_str}T{hour:02d}:00:00")
 
                 try:

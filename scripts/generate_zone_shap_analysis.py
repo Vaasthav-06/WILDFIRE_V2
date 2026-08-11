@@ -213,11 +213,19 @@ cb = fig.colorbar(hb, ax=ax, label="Mean SHAP(VPD) + SHAP(EVI)\n<- reduces fire 
 
 # Contour at zero: draw iso-lines from a gridded interpolation
 from scipy.interpolate import griddata
-xi = np.linspace(evi_vals.min(), evi_vals.max(), 80)
-yi = np.linspace(vpd_vals.min(), vpd_vals.max(), 80)
+
+# Filter out NaNs before interpolation (1-day lag might introduce NaNs)
+valid_mask = ~(np.isnan(evi_vals) | np.isnan(vpd_vals) | np.isnan(shap_comb))
+evi_vals_clean = evi_vals[valid_mask]
+vpd_vals_clean = vpd_vals[valid_mask]
+shap_comb_clean = shap_comb[valid_mask]
+
+xi = np.linspace(np.nanmin(evi_vals), np.nanmax(evi_vals), 80)
+yi = np.linspace(np.nanmin(vpd_vals), np.nanmax(vpd_vals), 80)
 XI, YI = np.meshgrid(xi, yi)
-ZI = griddata((evi_vals, vpd_vals), shap_comb, (XI, YI), method="linear")
+
 try:
+    ZI = griddata((evi_vals_clean, vpd_vals_clean), shap_comb_clean, (XI, YI), method="linear")
     cs = ax.contour(XI, YI, ZI, levels=[0], colors="black",
                     linewidths=2, linestyles="--")
     ax.clabel(cs, fmt="SHAP = 0", fontsize=9)

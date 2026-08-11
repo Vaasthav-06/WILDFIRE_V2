@@ -5,8 +5,8 @@ Generalization of generate_calibration_before_after.py to ALL 7 models.
 
 Addresses reviewer point 4: calibration curves were only shown for the
 Stacking Ensemble. This script produces reliability diagrams for all models
-using the same methodology (chronological split: calibration fitted on first
-half of test set, evaluated on second half).
+using the same methodology (calibrator fitted on Oct-Dec 2023 slice of training 
+period, evaluated on full 2024-2025 test set).
 
 Outputs:
   paper_figures/fig_calibration_all_models.png
@@ -93,16 +93,23 @@ print("=" * 65)
 print("All-Model Calibration Curves (Reliability Diagrams)")
 print("=" * 65)
 
-# Step 1: Load and split test set
-print("\n[1/3] Loading test set ...")
+# Step 1: Load and split datasets
+print("\n[1/3] Loading datasets ...")
 df = pd.read_csv(DATA_FEAT, usecols=["acq_date"] + FEATURE_COLS + [TARGET_COL])
 df["acq_date"] = pd.to_datetime(df["acq_date"])
-df_test = df[df["acq_date"].dt.year >= 2024].sort_values("acq_date").reset_index(drop=True)
+
+test_mask = df["acq_date"].dt.year >= 2024
+df_test = df[test_mask].sort_values("acq_date").reset_index(drop=True)
 X_test  = df_test[FEATURE_COLS].values
-y_test  = df_test[TARGET_COL].values
-split_idx = len(df_test) // 2
-y_true_eval = y_test[split_idx:]
-print(f"   Test rows: {len(df_test):,}  (eval on second half: {len(y_true_eval):,} rows)")
+y_true_eval = df_test[TARGET_COL].values
+
+calib_mask = (df["acq_date"].dt.year == 2023) & (df["acq_date"].dt.month >= 10)
+df_calib = df[calib_mask].sort_values("acq_date").reset_index(drop=True)
+X_calib  = df_calib[FEATURE_COLS].values
+y_true_fit = df_calib[TARGET_COL].values
+
+print(f"   Test rows: {len(df_test):,}  (full 2024-2025 eval)")
+print(f"   Calib fit rows: {len(df_calib):,} (Oct-Dec 2023)")
 
 # Step 2: Compute calibration data for each model
 print("\n[2/3] Computing calibration curves ...")
@@ -120,19 +127,16 @@ for model_name, pkl_name, color in MODELS:
     model = joblib.load(pkl_path)
 
     try:
-        y_prob_full = model.predict_proba(X_test)[:, 1]
+        y_prob_calib = model.predict_proba(X_calib)[:, 1]
+        y_prob_eval  = model.predict_proba(X_test)[:, 1]
     except Exception as e:
         print(f"   ERROR: {model_name} predict_proba failed: {e}")
         calib_data.append(None)
         continue
 
-    y_prob_fit  = y_prob_full[:split_idx]
-    y_true_fit  = y_test[:split_idx]
-    y_prob_eval = y_prob_full[split_idx:]
-
-    # Fit calibrator on first half
+    # Fit calibrator on Oct-Dec 2023 slice
     ir = IsotonicRegression(out_of_bounds="clip")
-    ir.fit(y_prob_fit, y_true_fit)
+    ir.fit(y_prob_calib, y_true_fit)
     y_prob_cal = ir.predict(y_prob_eval)
 
     ece_before = compute_ece(y_true_eval, y_prob_eval)
@@ -198,7 +202,7 @@ for ax in list(axes_flat)[n_models:]:
 
 fig.suptitle(
     "Reliability Diagrams: All Models — Before and After Isotonic Regression Calibration\n"
-    "Calibrator fitted on chronological first half of 2024–2025 test set; evaluated on second half.",
+    "Calibrator fitted on Oct–Dec 2023 slice; evaluated on full 2024–2025 test set.",
     fontsize=10.5, fontweight="bold", y=1.01,
 )
 plt.tight_layout()

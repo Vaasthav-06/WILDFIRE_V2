@@ -9,12 +9,10 @@ Saves:
   paper_figures/fig_calibration_before_after_stacking.png
 
 Calibration split rationale:
-  - First 50% of test set (chronologically earlier 2024 data) is used to fit
-    the isotonic regressor -- mirrors production where calibration is done on
-    recent history.
-  - Second 50% (later 2024 + 2025 data) is used only for evaluation.
-    This ensures no data leakage between the calibration fitting and the
-    reported reliability diagram.
+  - Isotonic regression calibrator is fitted on a dedicated validation slice 
+    held out from the training period (October-December 2023).
+  - Evaluated on the full, untouched 2024-2025 test set.
+    This ensures absolutely no data leakage into the test set.
 """
 
 import sys
@@ -97,15 +95,20 @@ print("Calibration Before/After -- Stacking Ensemble")
 print("=" * 60)
 
 # ── Step 1: Load data ─────────────────────────────────────────────────────────
-print("\n[1/5] Loading data (test set only) ...")
+print("\n[1/5] Loading data (train + test set) ...")
 df = pd.read_csv(
     DATA_FEAT,
     usecols=["acq_date"] + FEATURE_COLS + [TARGET_COL],
 )
 df["acq_date"] = pd.to_datetime(df["acq_date"])
+
 test_mask = df["acq_date"].dt.year >= 2024
 df_test   = df[test_mask].sort_values("acq_date").reset_index(drop=True)
 print(f"   Test set: {len(df_test):,} rows (sorted chronologically)")
+
+calib_mask = (df["acq_date"].dt.year == 2023) & (df["acq_date"].dt.month >= 10)
+df_calib_fit = df[calib_mask].sort_values("acq_date").reset_index(drop=True)
+print(f"   Calib fit set (Oct-Dec 2023): {len(df_calib_fit):,} rows")
 
 # ── Step 2: Load stacking ensemble ────────────────────────────────────────────
 gb = MODEL_PATH.stat().st_size / 1e9
@@ -113,34 +116,27 @@ print(f"\n[2/5] Loading {MODEL_PATH.name} ({gb:.2f} GB) ...")
 model = joblib.load(MODEL_PATH)
 print("   Loaded.")
 
-# ── Step 3: Predict on full test set ─────────────────────────────────────────
-print("\n[3/5] Inference on full test set ...")
-X_test = df_test[FEATURE_COLS]
-y_test = df_test[TARGET_COL].values
-y_prob = model.predict_proba(X_test)[:, 1]
-print(f"   Done. Prob range: [{y_prob.min():.4f}, {y_prob.max():.4f}]")
-
-# ── Step 4: Chronological split & calibration ─────────────────────────────────
-print("\n[4/5] Fitting Isotonic Regression on first half of test set ...")
-split_idx = len(df_test) // 2
-
-y_prob_fit  = y_prob[:split_idx]
-y_true_fit  = y_test[:split_idx]
-y_prob_eval = y_prob[split_idx:]
-y_true_eval = y_test[split_idx:]
-
-print(f"   Calibration fitting set : {split_idx:,} samples "
-      f"(up to {df_test['acq_date'].iloc[split_idx - 1].date()})")
-print(f"   Calibration eval set    : {len(df_test) - split_idx:,} samples "
-      f"(from {df_test['acq_date'].iloc[split_idx].date()})")
+# ── Step 3: Predict on calibration set and fit Isotonic Regression ────────────
+print("\n[3/5] Inference on calib fit set and fitting calibrator ...")
+X_calib = df_calib_fit[FEATURE_COLS]
+y_calib = df_calib_fit[TARGET_COL].values
+y_prob_calib = model.predict_proba(X_calib)[:, 1]
 
 ir = IsotonicRegression(out_of_bounds="clip")
-ir.fit(y_prob_fit, y_true_fit)
+ir.fit(y_prob_calib, y_calib)
+
+# ── Step 4: Evaluate on full test set ─────────────────────────────────────────
+print("\n[4/5] Inference on full test set ...")
+X_test = df_test[FEATURE_COLS]
+y_test = df_test[TARGET_COL].values
+y_prob_eval = model.predict_proba(X_test)[:, 1]
+y_true_eval = y_test
+
 y_prob_cal = ir.predict(y_prob_eval)
 
 ece_before = compute_ece(y_true_eval, y_prob_eval, n_bins=N_BINS)
 ece_after  = compute_ece(y_true_eval, y_prob_cal,  n_bins=N_BINS)
-reduction  = (1 - ece_after / ece_before) * 100
+reduction  = (1 - ece_after / ece_before) * 100 if ece_before > 0 else 0.0
 
 print(f"   ECE Before : {ece_before:.4f}")
 print(f"   ECE After  : {ece_after:.4f}")
@@ -197,7 +193,7 @@ ece_txt = (
 )
 fig.suptitle(
     "Reliability Diagram -- Stacking Ensemble Probability Calibration\n"
-    f"Isotonic Regression fitted on chronological first half of the 2024--2025 test set  |  {ece_txt}",
+    f"Isotonic Regression fitted on Oct--Dec 2023 slice; evaluated on full 2024--2025 test set  |  {ece_txt}",
     fontsize=10.5, fontweight="bold", y=1.02,
 )
 

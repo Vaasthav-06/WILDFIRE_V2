@@ -17,7 +17,7 @@ To build a robust prediction model, we integrated five distinct datasets. We sel
 \endhead
 NASA FIRMS (VIIRS S-NPP, C2) & Active fire detections (confidence and radiative power) & 2018--2025 & Ground truth for fire occurrence and validation \\
 \hline
-ERA5 Reanalysis & 2m temperature, humidity, wind speed, vapor pressure deficit & 2018--2025, $0.25 \times 0.25$ grid & Physics-driven weather context; consistent interpolation across topographically complex terrain \\
+ERA5 Reanalysis & 2m temperature, humidity, wind speed, vapor pressure deficit & 2018--Oct~2025, $0.25 \times 0.25$ grid & Physics-driven weather context; consistent interpolation across topographically complex terrain \\
 \hline
 MODIS EVI & Enhanced Vegetation Index (monthly composites) & 2018--2025 & Live-fuel moisture proxy; disentangles green vegetation from soil background \\
 \hline
@@ -30,7 +30,9 @@ Open-Meteo API & 24h / 7-day weather forecasts (temperature, humidity, wind) & R
 \noindent
 \subsubsection{Fire Occurrence Ground Truth}
 
-For the ground truth on exactly where and when fires occurred, we use NASA FIRMS' VIIRS S-NPP Collection 2 active-fire product, covering 2018 to 2025. This satellite system detects active fires globally roughly every 12 hours. Because we need high-quality labels, we exclusively retain detections with a ``nominal'' or ``high'' confidence score (dropping ``low'' confidence detections). In addition, we apply a strict Fire Radiative Power (FRP) threshold, retaining only detections with $\text{FRP} \ge 1.0$ MW. This threshold serves as a standard operational floor to ensure we only train on significant thermal anomalies. Furthermore, we explicitly discard any cloudy days from our dataset. If we kept them, we would risk labeling a cloudy day as ``no fire'' simply because the satellite's view was blocked, which would inject false negatives into our training data.
+For the ground truth on exactly where and when fires occurred, we use NASA FIRMS' VIIRS S-NPP Collection 2 active-fire product, covering 2018 to 31 October 2025. This satellite system detects active fires globally roughly every 12 hours. Because we need high-quality labels, we exclusively retain detections with a ``nominal'' or ``high'' confidence score (dropping ``low'' confidence detections). In addition, we apply a strict Fire Radiative Power (FRP) threshold, retaining only detections with $\text{FRP} \ge 1.0$ MW. This threshold serves as a standard operational floor to ensure we only train on significant thermal anomalies.
+
+One inherent limitation of the VIIRS sensor is that it cannot detect fires through sufficiently thick cloud cover. On days where cloud obscures the satellite's view, fire detections are simply absent from the FIRMS record; the system has no mechanism to distinguish a genuinely fire-free day from an unobservable one. As a result, cloud-obscured days with underlying fires may enter our date-conditional negative sampling pool and be mislabeled as confirmed no-fire observations. This is a known, unaddressed selection-bias risk arising from the data source itself, not from our pipeline design. We document this limitation explicitly in Section~4 and identify integration of cloud-fraction metadata (e.g., the MODIS MOD35 cloud product) as a target for future work.
 
 A critical design decision in our system is the retention of agricultural burning (such as stubble burning in the Indo-Gangetic Plains during October--November and April--May). Rather than masking out these zones, we intentionally retain these detections as legitimate positives. The rationale is that our model functions as an all-cause fire risk system; agricultural fires still present significant particulate pollution and pose serious spread risks to adjacent vegetation and infrastructure. By including them, the system learns the conditions under which these anthropogenic fires are most likely to ignite and escalate.
 
@@ -45,7 +47,13 @@ Figure~\ref{fig:seasonal_freq} shows the seasonal pattern of wildfire occurrence
 
 \subsubsection{Meteorological Reanalysis}
 
-For our meteorological context, we rely on ERA5, which is ECMWF's global atmospheric reanalysis dataset. For every grid cell and day, we extract 2m air temperature, 2m relative humidity, 10m wind speed, and vapor pressure deficit (VPD). We compute VPD directly as the gap between the saturated and actual vapor pressure. We chose these specific variables because fire science research consistently links them to ignition probability. Temperature affects fuel drying rates, humidity dictates fuel moisture, wind speed accelerates fire spread by increasing oxygen supply, and VPD serves as a comprehensive metric for plant water stress. Because of this, VPD acts as a stronger fire-weather indicator than raw humidity alone.
+For our meteorological context, we rely on ERA5, which is ECMWF's global atmospheric reanalysis dataset. For every grid cell and day, we extract 2m air temperature, 2m relative humidity, 10m wind speed, and vapor pressure deficit (VPD). We compute VPD directly as the gap between the saturated and actual vapor pressure.
+
+\medskip
+\paragraph{Day-lag construction.}
+To implement genuine next-day fire risk forecasting, we apply a \textbf{one-day lag} to all ERA5 feature extraction: for a labeled event on day~$D$ (whether a fire detection or a date-conditional negative sample), we extract ERA5 meteorological features from day~$D{-}1$. This ensures the model sees only weather information that would realistically be available before day~$D$'s fire activity begins, rather than concurrent same-day conditions. In an operational deployment, ERA5 reanalysis for day~$D{-}1$ serves as a stand-in for a day-ahead numerical weather prediction---a direct swap that requires no pipeline changes. The lag is applied symmetrically to both positive (fire) and negative (no-fire) samples, preserving the integrity of the date-conditional negative sampling strategy.
+
+We chose these specific variables because fire science research consistently links them to ignition probability. Temperature affects fuel drying rates, humidity dictates fuel moisture, wind speed accelerates fire spread by increasing oxygen supply, and VPD serves as a comprehensive metric for plant water stress. Because of this, VPD acts as a stronger fire-weather indicator than raw humidity alone.
 
 \subsubsection{Vegetation Health Indices}
 
@@ -110,6 +118,9 @@ In engineering terms, SVP represents the maximum moisture capacity of the air at
 
 We include two features to describe the fuel and terrain environment: (i) SRTM elevation (m), representing the altitude of the grid cell; and (ii) MODIS EVI, functioning as a proxy for live-vegetation moisture content. Including elevation is logically sound because higher altitudes generally feature lower temperatures and higher humidity, naturally suppressing fire risk. Conversely, lower valley regions often experience strong downslope winds and lower relative humidity, which actively increase fire likelihood. EVI provides a satellite-driven metric for plant hydration. Because active photosynthesis requires internal water, high EVI values correlate strongly with high fuel moisture. During monsoon seasons, EVI peaks and fire risk drops. During extended dry seasons, EVI plummets, signaling an elevated risk of ignition. Feeding EVI directly to the model allows it to learn these fuel-moisture dynamics without requiring ground-based sensor networks, which are highly impractical to deploy across India's massive landmass.
 
+\medskip
+\noindent\textbf{Temporal Resolution Caveat.} MODIS EVI composites (16-day revisit, monthly average) are a pragmatic data choice, but they introduce a known temporal mismatch: the composites cannot capture rapid fuel-drying events that unfold on 1--3 day timescales immediately preceding ignition. A single heavy precipitation event followed by three dry days can create extreme ignition conditions that a monthly composite entirely misses. Higher-frequency alternatives---daily or 8-day MODIS/VIIRS surface reflectance---could close this gap but are substantially noisier due to cloud contamination. Benchmarking against these higher-frequency vegetation indices is identified as a priority direction for future work.
+
 Figure~\ref{fig:evi_dist} empirically supports this reasoning by comparing the EVI distribution between actual fire events and date-matched non-fire examples. Fire occurrences consistently cluster at lower EVI values (median = 0.205), affirming that dehydrated vegetation is highly prone to ignition. Meanwhile, non-fire cells exhibit a broader EVI distribution with a higher concentration in the upper range, indicating that well-hydrated biomass effectively prevents fires even under warm weather conditions.
 
 \begin{figure}[H]
@@ -139,21 +150,21 @@ Table~\ref{tab:ablation} provides a systematic feature group ablation study, qua
 \renewcommand{\arraystretch}{1.25}
 \begin{tabular}{lcccc}
 \toprule
-\textbf{Feature Group Ablated} & \textbf{ROC-AUC} & \textbf{Recall} & \textbf{$\Delta$AUC} & \textbf{$\Delta$Recall} \\
+\\textbf{Feature Group Ablated} & \textbf{ROC-AUC} & \textbf{Recall} & \textbf{$\Delta$AUC} & \textbf{$\Delta$Recall} \\
 \midrule
-\textbf{Full model (baseline)} & 0.9613 & 0.9606 & $-$ & $-$ \\
-Temporal (\texttt{month\_sin}, \texttt{month\_cos}) & 0.9305 & 0.9384 & $-0.0308$ & $-0.0222$ \\
-Meteorology (temp, humidity, wind, VPD) & 0.8910 & 0.9017 & $-0.0703$ & $-0.0588$ \\
-VPD$\times$Wind Interaction (FSP) & 0.9586 & 0.9568 & $-0.0027$ & $-0.0038$ \\
-Vegetation -- EVI & 0.9352 & 0.9789 & $-0.0262$ & $+0.0183$ \\
-Elevation & 0.9153 & 0.8289 & $-0.0460$ & $-0.1317$ \\
-Land Cover (all 11 indicators) & 0.9612 & 0.9606 & $-0.0001$ & $+0.0000$ \\
-Fuel Stack (EVI + Elevation) & 0.8456 & 0.8717 & $-0.1157$ & $-0.0888$ \\
+\textbf{Full model (baseline)} & 0.9562 & 0.9579 & $-$ & $-$ \\
+Temporal (\texttt{month\_sin}, \texttt{month\_cos}) & 0.9243 & 0.9384 & $-0.0320$ & $-0.0195$ \\
+Meteorology (temp, humidity, wind, VPD) & 0.9055 & 0.9221 & $-0.0508$ & $-0.0358$ \\
+VPD$\times$Wind Interaction (FSP) & 0.9531 & 0.9476 & $-0.0032$ & $-0.0104$ \\
+Vegetation -- EVI & 0.9267 & 0.9771 & $-0.0296$ & $+0.0192$ \\
+Elevation & 0.9053 & 0.8137 & $-0.0510$ & $-0.1442$ \\
+Land Cover (all 11 indicators) & 0.9562 & 0.9580 & $-0.0001$ & $+0.0000$ \\
+Fuel Stack (EVI + Elevation) & 0.8488 & 0.8875 & $-0.1074$ & $-0.0704$ \\
 \midrule
 KBDI (rejected candidate)$^\dagger$ & --- & --- & $\approx 0$ & $\approx 0$ \\
 \bottomrule
 \end{tabular}
-\caption{Feature group ablation study on the held-out 2024--2025 test set, using mean-substitution on the fitted XGBoost model. Each row reports model performance when the corresponding feature group is replaced by training-set column means, simulating the effect of that group being absent (no retraining required). $\Delta$AUC and $\Delta$Recall are relative to the full model baseline (row 1); larger negative values indicate higher group importance. \textbf{Meteorology} (temperature, humidity, wind, VPD) is the single most important group by AUC ($\Delta$AUC $= -0.070$). \textbf{Elevation} is the most critical group for recall ($\Delta$Recall $= -0.132$), consistent with its role as a primary fire-suppressor in the SHAP analysis. Removing the combined \textbf{Fuel Stack} (EVI + Elevation) produces the largest joint drop ($\Delta$AUC $= -0.116$), confirming that terrain and live-fuel moisture together form the core fire-discriminating signal once weather is held constant. \textbf{Land Cover} (11 binary indicators) contributes negligible AUC ($\Delta$AUC $\approx 0$) but is retained for fuel-type context. The \textbf{VPD$\times$Wind} interaction term contributes only marginally on its own, but its physics motivation (fire-spread potential) justifies retention. $^\dagger$KBDI (Keetch--Byram Drought Index) was evaluated as a candidate feature during feature selection but excluded prior to final model training: its atmospheric drought signal was found largely redundant with VPD, and consistent daily precipitation inputs across India's heterogeneous monsoon zones introduced data-quality issues. Removing KBDI from early experiments produced no measurable change in held-out AUC.}
+\caption{Feature group ablation study on the held-out 2024--2025 test set, using mean-substitution on the fitted XGBoost model. Each row reports model performance when the corresponding feature group is replaced by training-set column means, simulating the effect of that group being absent (no retraining required). $\Delta$AUC and $\Delta$Recall are relative to the full model baseline (row 1); larger negative values indicate higher group importance. \textbf{Meteorology} (temperature, humidity, wind, VPD) is the single most important group by AUC ($\Delta$AUC $= -0.051$). \textbf{Elevation} is the most critical group for recall ($\Delta$Recall $= -0.144$), consistent with its role as a primary fire-suppressor in the SHAP analysis. Removing the combined \textbf{Fuel Stack} (EVI + Elevation) produces the largest joint drop ($\Delta$AUC $= -0.107$), confirming that terrain and live-fuel moisture together form the core fire-discriminating signal once weather is held constant. \textbf{Land Cover} (11 binary indicators) contributes negligible AUC ($\Delta$AUC $\approx 0$) but is retained as a domain-guided structural control. The \textbf{VPD$\times$Wind} interaction term contributes only marginally on its own ($\Delta$AUC $= -0.0032$), but its physics motivation (fire-spread potential) justifies retention as a domain-guided structural control. $^\dagger$KBDI (Keetch--Byram Drought Index) was evaluated as a candidate feature during feature selection but excluded prior to final model training: its atmospheric drought signal was found largely redundant with VPD, and consistent daily precipitation inputs across India's heterogeneous monsoon zones introduced data-quality issues. Removing KBDI from early experiments produced no measurable change in held-out AUC.}
 \label{tab:ablation}
 \end{table}
 

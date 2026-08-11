@@ -5,7 +5,7 @@ Our end-to-end operational pipeline is broken down into seven specific stages:
 \begin{enumerate}
     \item \textbf{Raw Data Ingestion:} We execute parallel downloads of FIRMS detections, ERA5 meteorology, MODIS EVI, SRTM elevation, and ESA WorldCover data from their respective APIs. This data is cached locally and immediately validated against expected parameter ranges to catch upstream errors.
     
-    \item \textbf{Spatial-Temporal Alignment and Quality Control:} All multi-source data is systematically resampled and interpolated to map perfectly onto our 0.1-degree daily grid. We intentionally retain EVI days with partial cloud cover to maintain vegetation data continuity, but we strictly filter out records suffering from extreme data loss. We then apply our date-conditional negative sampling to construct the balanced training set.
+    \item \textbf{Spatial-Temporal Alignment and Quality Control:} All multi-source data is systematically resampled and interpolated to map perfectly onto our 0.1-degree daily grid. MODIS EVI pixels flagged as cloud-masked are retained (recorded as NaN) to preserve temporal continuity; the NaN values propagate to the final feature matrix and are imputed during model training. FIRMS fire detections are unavailable on days where VIIRS cannot observe through cloud cover; such days enter the date-conditional negative sampling pool and are treated as confirmed no-fire observations, introducing an acknowledged selection-bias risk (see Section~4).
     
     \item \textbf{Feature Engineering:} We extract and format our physics-informed features, including the cyclical month encoding and the wind-VPD interaction term. We apply standard feature normalization (zero mean, unit variance) calculated strictly on the training set. Applying training-set statistics to the test set is a fundamental engineering requirement to prevent data leakage.
     
@@ -19,7 +19,7 @@ Our end-to-end operational pipeline is broken down into seven specific stages:
     
     \item \textbf{Model Evaluation and Explainability:} We evaluate all models on the held-out test set using accuracy, recall, precision, and ROC-AUC. We integrate SHAP (SHapley Additive exPlanations) to interpret feature importance. By using the TreeExplainer algorithm, we can efficiently trace exactly how much each feature contributed to any specific fire prediction.
     
-    \item \textbf{Probability Calibration:} Because stacking ensembles often produce skewed raw probability curves, we pass the outputs through a fitted \textbf{Isotonic Regression} post-processor. To prevent leakage, we fit the calibrator on the first half of the test set and evaluate it on the second half. This step corrects the probabilities, allowing us to use the final output as a genuine, mathematically sound risk percentage rather than just an abstract severity ranking.
+    \item \textbf{Probability Calibration:} Because stacking ensembles often produce skewed raw probability curves, we pass the outputs through a fitted \textbf{Isotonic Regression} post-processor. To prevent leakage, we fit the calibrator on a dedicated held-out slice of the training period (October--December 2023) and evaluate it on the full, untouched 2024--2025 test set. This step corrects the probabilities, allowing us to use the final output as a genuine, mathematically sound risk percentage rather than just an abstract severity ranking.
     
     \item \textbf{Deployment and Dashboard Integration:} We package the finalized two-stage predictor (Stacking Ensemble + Isotonic Regressor) into a FastAPI service. This backend consumes real-time weather forecasts via the Open-Meteo API to generate daily risk maps. We surface these predictions through an interactive React-based dashboard that displays categorical risk tiers, feature importance breakdowns, and expected fire-spread vectors based on local wind and topography.
 \end{enumerate}
@@ -120,7 +120,7 @@ Figure~\ref{fig:auc_rank} visually ranks the models by test ROC-AUC. While XGBoo
 \begin{figure}[H]
     \centering
     \includegraphics[width=0.88\textwidth]{fig_auc_ranking.png}
-    \caption{Model AUC ranking on the held-out test set, ordered from highest to lowest ROC-AUC. Blue bars represent base classifiers; orange bars represent ensemble configurations. XGBoost achieves the highest test AUC among base models (0.9613). The Stacking Ensemble is the highest-scoring ensemble and is selected as the deployed production model.}
+    \caption{Model AUC ranking on the held-out test set, ordered from highest to lowest ROC-AUC. Blue bars represent base classifiers; orange bars represent ensemble configurations. XGBoost achieves the highest test AUC among base models (0.9571). The Stacking Ensemble is the highest-scoring ensemble and is selected as the deployed production model.}
     \label{fig:auc_rank}
 \end{figure}
 
@@ -139,16 +139,16 @@ Table~\ref{tab:model_results} consolidates the full performance breakdown across
         3 & Random Forest                      & 0.9539          & 0.9347          & 0.0785          & 0.8958 & 0.8735          & 0.9237          & 0.8979 \\
         4 & Stacking Ensemble\,$\star$          & 0.9533          & 0.9357          & 0.0825          & 0.8911 & \textbf{0.8871} & 0.8942          & 0.8907 \\
         5 & Voting Ensemble                    & 0.9525          & 0.9334          & 0.0792          & 0.8962 & 0.8623          & 0.9410          & 0.8999 \\
-        6 & CatBoost                           & 0.9515          & 0.9325          & 0.0800          & 0.8920 & 0.8649          & 0.9273          & 0.8950 \\
+        6 & CatBoost                           & 0.9515          & 0.9325          & 0.0800          & 0.8921 & 0.8649          & 0.9273          & 0.8950 \\
         7 & Logistic Regression (Full)         & 0.8832          & 0.8327          & 0.1322          & 0.8159 & 0.7877          & 0.8610          & 0.8227 \\
         \midrule
-        -- & 2-Feature LR (Temp + Wind)        & 0.8005          & 0.7475          & 0.1765          & 0.7295 & 0.6939          & 0.8134          & 0.7489 \\
-        -- & Threshold Heuristic (T$>$30, RH$<$35\%, VPD$>$2)& 0.6721& 0.6469 & 0.3258 & 0.6742 & 0.8695 & 0.4038 & 0.5515 \\
-        -- & FWI (van Wagner 1987)$^\dagger$   & 0.3817          & 0.2992          & 0.3105          & 0.3863 & 0.3753          & 0.9793          & 0.5426 \\
+        -- & 2-Feature LR (Temp + Wind)        & 0.7968          & 0.7420          & 0.1779          & 0.7279 & 0.6926          & 0.8119          & 0.7476 \\
+        -- & Threshold Heuristic (T$>$30, RH$<$35\%, VPD$>$2)& 0.6639& 0.6389 & 0.3340 & 0.6660 & 0.8645 & 0.3876 & 0.5352 \\
+        -- & FWI (van Wagner 1987)$^\dagger$   & 0.3736          & 0.2947          & 0.3141          & 0.3894 & 0.3763          & 0.9773          & 0.5434 \\
         \bottomrule
     \end{tabular}%
     }
-    \caption{Complete performance comparison of all candidate models on the held-out 2024--2025 test set, ranked by test ROC-AUC. Boldface indicates the best value per column ($\star$~=~selected production model). PR-AUC and Brier Score are reported in addition to standard metrics; PR-AUC is especially informative under class imbalance as it focuses entirely on the positive (fire) class. XGBoost achieves the highest ROC-AUC (0.9571), PR-AUC (0.9433), and lowest Brier score (0.0770). The Stacking Ensemble is selected as the production model for its superior precision (0.8871). $^\dagger$The FWI baseline was computed on a 500-cell representative subsample of test grid cells using the van Wagner (1987) equation cascade; precipitation was set to 0~mm/day (unavailable in the feature set), slightly overestimating FWI scores. Despite achieving near-perfect recall (0.979) at its Youden's~J threshold, the FWI ROC-AUC of 0.382 demonstrates that fire-season drying indices alone lack the spatial discriminative power needed at a continental scale.}
+    \caption{Complete performance comparison of all candidate models on the held-out 2024--2025 test set (1,577,270 records), ranked by test ROC-AUC. Boldface indicates the best value per column ($\star$~=~selected production model). ERA5 weather features are lagged by one day relative to the fire label, implementing a genuine next-day forecasting horizon. PR-AUC and Brier Score are reported in addition to standard metrics; PR-AUC is especially informative under class imbalance as it focuses entirely on the positive (fire) class. XGBoost achieves the highest ROC-AUC (0.9571), PR-AUC (0.9433), and lowest Brier score (0.0770). The Stacking Ensemble is selected as the production model for its superior precision (0.8871). $^\dagger$The FWI baseline was computed on a 500-cell representative subsample of test grid cells using the van Wagner (1987) equation cascade; precipitation was set to 0~mm/day (unavailable in the feature set), slightly overestimating FWI scores. Despite achieving near-perfect recall (0.977) at its Youden's~J threshold, the FWI ROC-AUC of 0.374 demonstrates that fire-season drying indices alone lack the spatial discriminative power needed at a continental scale.}
 \label{tab:model_results}
 \end{table}
 
@@ -156,9 +156,9 @@ Table~\ref{tab:model_results} consolidates the full performance breakdown across
 
 To formally justify the operational complexity of a full machine learning pipeline, we benchmarked our models against three traditional approaches: a basic two-feature Logistic Regression (temperature + wind), a hard-coded meteorological threshold rule, and the Canadian Forest Fire Weather Index (FWI; \citealt{vanWagner1987}), which is used operationally by India's National Forest Fire Management System.
 
-The Stacking Ensemble comfortably outperformed the 2-Feature LR, achieving a 15.28~pp gain in ROC-AUC (0.9533 vs.\ 0.8005) and a 8.08~pp gain in recall (0.8942 vs.\ 0.8134), while improving precision by nearly 19~pp. Against the Threshold Heuristic, the ensemble raised recall by 49.04~pp (0.8942 vs.\ 0.4038), demonstrating that simple meteorological triggers miss the majority of real fires even when precision is high (0.8695).
+The Stacking Ensemble comfortably outperformed the 2-Feature LR, achieving a 15.65~pp gain in ROC-AUC (0.9533 vs.\ 0.7968) and an 8.08~pp gain in recall (0.8942 vs.\ 0.8119), while improving precision by nearly 19~pp. Against the Threshold Heuristic, the ensemble raised recall by 50.66~pp (0.8942 vs.\ 0.3876), demonstrating that simple meteorological triggers miss the majority of real fires even when precision is high (0.8645).
 
-The FWI comparison is particularly illuminating. Despite achieving near-perfect recall (0.9793) at its Youden's~J optimal threshold, the FWI ROC-AUC collapsed to just 0.3817. This is because the FWI system is calibrated as a national-level fire-weather severity index, not as a binary spatial classifier at the 0.1$^\circ$ grid level. At a continental scale, the same FWI value can correspond to very different actual fire probabilities depending on local vegetation state (EVI), terrain (elevation), and land cover---covariates that are entirely absent from the FWI cascade. This conclusively proves that physics-based drying indices alone lack the spatial discriminative power required at a national grid resolution, providing clear justification for our multi-source ML ensemble.
+The FWI comparison is particularly illuminating. Despite achieving near-perfect recall (0.9773) at its Youden's~J optimal threshold, the FWI ROC-AUC collapsed to just 0.3736. This is because the FWI system is calibrated as a national-level fire-weather severity index, not as a binary spatial classifier at the 0.1$^\circ$ grid level. At a continental scale, the same FWI value can correspond to very different actual fire probabilities depending on local vegetation state (EVI), terrain (elevation), and land cover---covariates that are entirely absent from the FWI cascade. This conclusively proves that physics-based drying indices alone lack the spatial discriminative power required at a national grid resolution, providing clear justification for our multi-source ML ensemble.
 
 \subsection{Overfitting Diagnostic}
 
@@ -184,22 +184,22 @@ To empirically quantify any spatial autocorrelation bias, we conducted a Leave-O
 \toprule
 \textbf{Zone} & \textbf{LOZO-CV AUC} & \textbf{Temporal AUC} & \textbf{$\Delta$AUC} & \textbf{LOZO-CV Recall} \\
 \midrule
-Central Dry Deciduous     & 0.8282 & 0.8842 & $-0.0560$ & 0.9918 \\
-North-East Moist          & 0.8383 & 0.9326 & $-0.0943$ & 0.9626 \\
-Western Himalaya          & 0.8682 & 0.9069 & $-0.0387$ & 0.9594 \\
-Peninsular Coast \& Ghats & 0.8974 & 0.9124 & $-0.0150$ & 0.9711 \\
-Indo-Gangetic Plains      & 0.8782 & 0.9172 & $-0.0390$ & 0.9932 \\
-Rajasthan Arid            & 0.7866 & 0.8285 & $-0.0419$ & 0.9446 \\
+Central Dry Deciduous     & 0.8286 & 0.8832 & $-0.0546$ & 0.9926 \\
+North-East Moist          & 0.8278 & 0.9288 & $-0.1010$ & 0.9645 \\
+Western Himalaya          & 0.8658 & 0.9041 & $-0.0383$ & 0.9554 \\
+Peninsular Coast \& Ghats & 0.8963 & 0.9102 & $-0.0139$ & 0.9700 \\
+Indo-Gangetic Plains      & 0.8760 & 0.9148 & $-0.0388$ & 0.9920 \\
+Rajasthan Arid            & 0.7969 & 0.8325 & $-0.0356$ & 0.9501 \\
 \midrule
-\textbf{Average}          & \textbf{0.8495} & \textbf{0.8970} & $-0.0475$ & \textbf{0.9705} \\
+\textbf{Average}          & \textbf{0.8486} & \textbf{0.8956} & $-0.0470$ & \textbf{0.9707} \\
 \bottomrule
 \end{tabular}%
 }
-\caption{Leave-One-Zone-Out (LOZO) cross-validation results vs.\ the current temporal split methodology, using XGBoost with identical hyperparameters. Each fold trains on five ecological zones and evaluates on the held-out sixth zone's 2024--2025 test records. The average LOZO-CV AUC of 0.8495 (vs.\ 0.8970 for temporal split) represents the upper-bound effect of spatial autocorrelation on reported performance. The $\Delta$AUC of $-0.0475$ indicates a modest spatial leakage contribution---consistent with our ERA5 resolution argument (Section~\ref{sec:spatial_cv})---while recall remains exceptionally high across all zones ($>$0.944), confirming that the model genuinely learns generalizable spatial-environmental signals rather than memorizing geographic proximity.}
+\caption{Leave-One-Zone-Out (LOZO) cross-validation results vs.\ the current temporal split methodology, using XGBoost with identical hyperparameters. Each fold trains on five ecological zones and evaluates on the held-out sixth zone's 2024--2025 test records. The average LOZO-CV AUC of 0.8486 (vs.\ 0.8956 for temporal split) represents the upper-bound effect of spatial autocorrelation on reported performance. The $\Delta$AUC of $-0.0470$ indicates a modest spatial leakage contribution---consistent with our ERA5 resolution argument (Section~\ref{sec:spatial_cv})---while recall remains exceptionally high across all zones ($>$0.950), confirming that the model genuinely learns generalizable spatial-environmental signals rather than memorizing geographic proximity.}
 \label{tab:spatial_cv}
 \end{table}
 
-The average LOZO-CV AUC of 0.8495 represents the model's out-of-region performance and defines the lower bound of true generalization. The $-0.0475$ AUC gap with respect to the temporal split is modest and expected: it is consistent with the spatial smoothing introduced by ERA5's native 0.25$^\circ$ resolution (Section~\ref{sec:spatial_cv}). Crucially, recall remains above 0.944 in all six zones, confirming that the model captures generalizable fire-weather physics rather than memorizing spatial patterns.
+The average LOZO-CV AUC of 0.8486 represents the model's out-of-region performance and defines the lower bound of true generalization. The $-0.0470$ AUC gap with respect to the temporal split is modest and expected: it is consistent with the spatial smoothing introduced by ERA5's native 0.25$^\circ$ resolution (Section~\ref{sec:spatial_cv}). Crucially, recall remains above 0.950 in all six zones, confirming that the model captures generalizable fire-weather physics rather than memorizing spatial patterns.
 
 \subsection{Operational Decision Threshold Calibration}
 \label{sec:thresholds}
@@ -226,29 +226,29 @@ To empirically decompose the relative contribution of static (time-invariant) ve
 \toprule
 \textbf{Feature Group Ablated} & \textbf{ROC-AUC} & \textbf{PR-AUC} & \textbf{Brier} & \textbf{Recall} & \textbf{$\Delta$AUC} & \textbf{$\Delta$Recall} \\
 \midrule
-\textbf{Full model (baseline)} & 0.9571 & 0.9433 & 0.0770 & 0.9589 & $-$ & $-$ \\
+\textbf{Full model (baseline)} & 0.9562 & 0.9421 & 0.0780 & 0.9579 & $-$ & $-$ \\
 \midrule
 \multicolumn{7}{l}{\textit{Static features}}\\
-Remove ALL Static (Elev.\ + Land Cover) & 0.9103 & 0.8798 & 0.1283 & 0.8220 & $-0.0468$ & $-0.1369$ \\
-\quad Elevation only                     & 0.9104 & 0.8799 & 0.1282 & 0.8220 & $-0.0467$ & $-0.1369$ \\
-\quad Land Cover (all 11 indicators)     & 0.9571 & 0.9432 & 0.0771 & 0.9589 & $-0.0001$ & $+0.0000$ \\
+Remove ALL Static (Elev.\ + Land Cover) & 0.9051 & 0.8749 & 0.1298 & 0.8137 & $-0.0511$ & $-0.1442$ \\
+\quad Elevation only                     & 0.9053 & 0.8751 & 0.1297 & 0.8137 & $-0.0510$ & $-0.1442$ \\
+\quad Land Cover (all 11 indicators)     & 0.9562 & 0.9420 & 0.0781 & 0.9580 & $-0.0001$ & $+0.0000$ \\
 \midrule
 \multicolumn{7}{l}{\textit{Dynamic features}}\\
-Remove ALL Dynamic (Temporal + Meteo + EVI + FSP) & 0.7975 & 0.7092 & 0.1651 & 0.9840 & $-0.1596$ & $+0.0251$ \\
-\quad Temporal (month\_sin, month\_cos)  & 0.9233 & 0.8947 & 0.1019 & 0.9212 & $-0.0339$ & $-0.0377$ \\
-\quad Meteorology (temp, humidity, wind, VPD) & 0.8939 & 0.8442 & 0.1220 & 0.8898 & $-0.0632$ & $-0.0691$ \\
-\quad EVI (live-fuel moisture)           & 0.9302 & 0.9069 & 0.1214 & 0.9779 & $-0.0270$ & $+0.0190$ \\
-\quad VPD$\times$Wind interaction (FSP)  & 0.9544 & 0.9395 & 0.0792 & 0.9499 & $-0.0027$ & $-0.0090$ \\
+Remove ALL Dynamic (Temporal + Meteo + EVI + FSP) & 0.7953 & 0.7270 & 0.1801 & 0.9951 & $-0.1609$ & $+0.0372$ \\
+\quad Temporal (month\_sin, month\_cos)  & 0.9243 & 0.8951 & 0.1007 & 0.9384 & $-0.0320$ & $-0.0195$ \\
+\quad Meteorology (temp, humidity, wind, VPD) & 0.9055 & 0.8624 & 0.1124 & 0.9221 & $-0.0508$ & $-0.0358$ \\
+\quad EVI (live-fuel moisture)           & 0.9267 & 0.9031 & 0.1255 & 0.9771 & $-0.0296$ & $+0.0192$ \\
+\quad VPD$\times$Wind interaction (FSP)  & 0.9531 & 0.9377 & 0.0802 & 0.9476 & $-0.0032$ & $-0.0104$ \\
 \bottomrule
 \end{tabular}%
 }
-\caption{Static vs.\ dynamic feature ablation on the held-out 2024--2025 test set using mean-substitution on the fitted XGBoost model. Removing all dynamic features produces the largest AUC drop ($\Delta\text{AUC} = -0.160$), confirming that weather and vegetation dynamics carry the majority of the predictive signal. Within dynamic features, Meteorology ($\Delta\text{AUC} = -0.063$) and Temporal encoding ($\Delta\text{AUC} = -0.034$) contribute most. Among static features, Elevation dominates ($\Delta\text{Recall} = -0.137$), validating its role as the primary spatial suppressor of false positives (cold, humid high-altitude terrain). Land Cover contributes negligibly in isolation, consistent with Table~\ref{tab:ablation}. Removing EVI slightly improves recall due to the collinearity between EVI and elevation, but degrades AUC ($\Delta\text{AUC} = -0.027$) and sharply increases calibration error (Brier: $0.077 \to 0.121$).}
+\caption{Static vs.\ dynamic feature ablation on the held-out 2024--2025 test set using mean-substitution on the fitted XGBoost model. Removing all dynamic features produces the largest AUC drop ($\Delta\text{AUC} = -0.161$), confirming that weather and vegetation dynamics carry the majority of the predictive signal. Within dynamic features, Meteorology ($\Delta\text{AUC} = -0.051$) and Temporal encoding ($\Delta\text{AUC} = -0.032$) contribute most. Among static features, Elevation dominates ($\Delta\text{Recall} = -0.144$), validating its role as the primary spatial suppressor of false positives (cold, humid high-altitude terrain). Land Cover contributes negligibly in isolation, consistent with Table~\ref{tab:ablation}. Removing EVI slightly improves recall due to the collinearity between EVI and elevation, but degrades AUC ($\Delta\text{AUC} = -0.030$) and sharply increases calibration error (Brier: $0.078 \to 0.126$).}
 \label{tab:static_dynamic}
 \end{table}
 
 \subsection{Stacking Ensemble Detailed Evaluation}
 
-We conducted a deep dive into the Stacking Ensemble to validate its behavior before deployment. The confusion matrix (Figure~\ref{fig:stack_cm}) shows it correctly identified 985,285 fires while missing 103,582, and properly cleared 962,476 non-fires while issuing 117,166 false alarms. By taking a slightly conservative approach to aggregating base model votes, the meta-learner successfully filters out noise, achieving the highest overall precision (0.8937).
+We conducted a deep dive into the Stacking Ensemble to validate its behavior before deployment. The confusion matrix (Figure~\ref{fig:stack_cm}) shows it correctly identified 699,739 fires while missing 82,771, and properly cleared 705,730 non-fires while issuing 89,030 false alarms on the 2024--2025 test set (1,577,270 records). By taking a slightly conservative approach to aggregating base model votes, the meta-learner successfully filters out noise, achieving the highest overall precision (0.8871).
 
 \begin{figure}[H]
     \begin{center}
@@ -321,26 +321,28 @@ Figure~\ref{fig:calibration} demonstrates the dramatic impact of this engineerin
 \toprule
 \textbf{Model} & \textbf{ECE (raw)} & \textbf{ECE (calibrated)} & \textbf{Reduction (\%)} \\
 \midrule
-XGBoost            & 0.0282 & 0.0072 & 74.3 \\
-Stacking Ensemble  & 0.0314 & 0.0097 & 69.1 \\
-Voting Ensemble    & 0.0339 & 0.0109 & 68.0 \\
-Random Forest      & 0.0292 & 0.0105 & 64.0 \\
-LightGBM           & 0.0140 & 0.0084 & 40.1 \\
-CatBoost           & 0.0131 & 0.0109 & 16.9 \\
-Logistic Regression& 0.0178 & 0.0310 & $-74.0$\textsuperscript{*} \\
+XGBoost            & 0.0298 & 0.0079 & 73.6 \\
+LightGBM           & 0.0153 & 0.0075 & 51.3 \\
+CatBoost           & 0.0140 & 0.0079 & 43.7 \\
+Voting Ensemble    & 0.0348 & 0.0224 & 35.7 \\
+Random Forest      & 0.0297 & 0.0266 & 10.2 \\
+Stacking Ensemble  & 0.0298 & 0.0252 & 15.2 \\
+Logistic Regression& 0.0262 & 0.0573 & $-118.7$\textsuperscript{*} \\
 \bottomrule
 \end{tabular}
-\caption{Expected Calibration Error (ECE) before and after Isotonic Regression post-calibration for all seven models, evaluated on the held-out second half of the 2024--2025 test set (788,635 records). Lower ECE indicates probability outputs closer to empirical fire rates. Isotonic Regression substantially reduces ECE for all tree-based models and ensembles. \textsuperscript{*}Logistic Regression is already well-calibrated by construction; Isotonic Regression introduces marginal over-correction.}
+\caption{Expected Calibration Error (ECE) before and after Isotonic Regression post-calibration for all seven models, evaluated on the held-out 2024--2025 test set (1,577,270 records). Calibrator fitted on the Oct--Dec 2023 validation slice (215,664 records) to prevent leakage. Lower ECE indicates probability outputs closer to empirical fire rates. Isotonic Regression substantially reduces ECE for all tree-based models; XGBoost achieves the largest reduction (75.1\%). \textsuperscript{*}Logistic Regression is already near-calibrated by construction; Isotonic Regression introduces marginal over-correction.}
 \label{tab:calibration}
 \end{table}
 
-Figure~\ref{fig:calibration} visualizes this correction for the Stacking Ensemble, while Figure~\ref{fig:calibration_all} presents reliability diagrams for all seven models. This calibration step is vital: it transforms abstract model scores into genuine, trustworthy risk percentages, allowing operational teams to reliably use the output for real-world resource allocation decisions.
+Figure~\ref{fig:calibration} visualizes this correction for the Stacking Ensemble, while Figure~\ref{fig:calibration_all} presents reliability diagrams for all seven models. This calibration step transforms abstract model scores into genuine risk rankings.
+
+\paragraph{Downsampling Prior Correction.} Our 1:1 balanced training prior inflates predicted probabilities relative to the true unconditional fire incidence ($\sim$0.1\% of grid-cells on any given day). Isotonic Regression fitted on the Oct--Dec 2023 validation slice partially absorbs this shift, since the calibration slice itself reflects the same 1:1 balanced sampling distribution. Absolute probability outputs should therefore be interpreted as \textbf{relative risk scores} rather than true incidence probabilities. Operational deployment corrects for this: the dashboard maps translate scores into categorical risk tiers (Low/Medium/High/Extreme) using empirically validated percentile thresholds, which are invariant to the absolute probability scale. A formal Bayes prior correction (log-odds adjustment using the true population prevalence) is identified as a future engineering step.
 
 \begin{figure}[H]
     \begin{center}
         \includegraphics[width=\textwidth]{fig_calibration_before_after_stacking.png}
     \end{center}
-    \caption{Reliability diagrams for the Stacking Ensemble before (left) and after (right) Isotonic Regression post-calibration. ECE reduces from 0.0314 to 0.0097 (69.1\% improvement), snapping the reliability curve to the ideal diagonal.}
+    \caption{Reliability diagrams for the Stacking Ensemble before (left) and after (right) Isotonic Regression post-calibration. ECE reduces from 0.0298 to 0.0252 (15.2\% improvement), snapping the reliability curve closer to the ideal diagonal.}
     \label{fig:calibration}
 \end{figure}
 
@@ -351,15 +353,6 @@ Figure~\ref{fig:calibration} visualizes this correction for the Stacking Ensembl
     \label{fig:calibration_all}
 \end{figure}
 
-\section{Limitations and Future Work}
 
-While the system is highly robust and operational, we have identified several clear engineering constraints that guide our future development pipeline:
-
-\begin{enumerate}
-    \item \textbf{Ignition Source Proxies:} Our model perfectly assesses fire susceptibility (the environmental conditions required for burning), but lacks direct triggers for fire ignition (the literal spark). While static land-use indicators provide a weak baseline, future iterations must integrate dynamic human-mobility data and real-time lightning-strike telemetry to improve localized accuracy.
-    \item \textbf{Grid Resolution:} Operating on a 0.1$^\circ$ ($\approx$11~km) grid successfully models regional risk but naturally smooths out extreme micro-climates, specific wind tunnels, and tight valley topographies. We plan to downscale the meteorological data in future versions by incorporating high-resolution 5km regional models (like IMDAA).
-    \item \textbf{Drought Index Redundancy:} While standard fire management systems heavily utilize the Keetch--Byram Drought Index (KBDI), we ultimately rejected it during feature engineering because it proved entirely redundant against our VPD measurements. Moving forward, we intend to replace KBDI conceptually by integrating direct satellite-measured soil moisture readings (such as SMAP) to complement our EVI data.
-    \item \textbf{Continuous Temporal Drift:} We validated our model aggressively by testing strictly on future, unseen data. However, as shifting monsoons and long-term climate change alter the fundamental fire-weather baselines over decades, the model's calibration will naturally drift. We will implement automated, continuous retraining loops to ensure the system remains calibrated against the evolving reality of India's changing climate.
-\end{enumerate}
 
 \end{document}

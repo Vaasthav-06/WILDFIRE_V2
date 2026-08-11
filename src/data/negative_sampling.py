@@ -200,6 +200,7 @@ def build_balanced_dataset(
     era5_lookup,
     n_negatives: int = None,
     random_seed: int = RANDOM_SEED,
+    weather_lag_days: int = 0,
 ) -> pd.DataFrame:
     """
     Build a balanced fire/no-fire training dataset.
@@ -211,10 +212,13 @@ def build_balanced_dataset(
       4. Concatenate and shuffle positives + negatives
 
     Args:
-        df_fire:      Enriched fire DataFrame (positives).
-        era5_lookup:  ERA5Lookup instance for weather enrichment.
-        n_negatives:  Number of negatives. Defaults to len(df_fire) (1:1).
-        random_seed:  For reproducibility.
+        df_fire:          Enriched fire DataFrame (positives).
+        era5_lookup:      ERA5Lookup instance for weather enrichment.
+        n_negatives:      Number of negatives. Defaults to len(df_fire) (1:1).
+        random_seed:      For reproducibility.
+        weather_lag_days: Days to subtract from acq_date before ERA5 lookup.
+                          Must match the lag used to enrich the positive samples.
+                          Default 0 = same-day (backward-compatible).
 
     Returns:
         Balanced DataFrame with fire_detected in {0, 1}.
@@ -228,7 +232,7 @@ def build_balanced_dataset(
 
     logger.info("Enriching negatives with ERA5 weather...")
     negatives_enriched = era5_lookup.enrich_dataframe(
-        negatives_raw, date_col="acq_date"
+        negatives_raw, date_col="acq_date", lag_days=weather_lag_days
     )
     negatives_enriched = negatives_enriched.dropna(
         subset=["temp", "humidity", "wind", "vpd"]
