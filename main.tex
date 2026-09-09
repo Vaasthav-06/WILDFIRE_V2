@@ -679,9 +679,23 @@ Figure~\ref{fig:shap_meta_bar} reveals how the meta-learner combines individual 
     \label{fig:shap_meta_bar}
 \end{figure}
 
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.85\textwidth]{fig_shap_meta_summary_stacking.png}
+    \caption{SHAP summary beeswarm plot for the Stacking Ensemble meta-learner, illustrating how individual base model probability outputs push the final ensemble risk prediction.}
+    \label{fig:shap_meta_summary}
+\end{figure}
+
 \subsubsection{Permutation SHAP: Input Feature Attribution}
 
 Figures~\ref{fig:shap_perm_summary} and~\ref{fig:shap_perm_bar} display the full input-feature SHAP analysis. Calculated via a model-agnostic \texttt{shap.PermutationExplainer} on a stratified test sample, this attributes accurate credit to the original features through the entire stacking pipeline. Elevation, EVI, and VPD stand out as the three most dominant predictors. This completely aligns with established fire-weather physics, confirming that the ensemble learned a scientifically sound hierarchy rather than an arbitrary numerical shortcut. High VPD (extreme drying) aggressively drives up risk, while high elevation and high EVI act as strong physical suppressors.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.85\textwidth]{fig_shap_summary_stacking.png}
+    \caption{Permutation SHAP summary beeswarm plot for the Stacking Ensemble, mapping the directional influence of each input feature on predicted wildfire risk.}
+    \label{fig:shap_perm_summary}
+\end{figure}
 
 \begin{figure}[H]
     \centering
@@ -771,8 +785,9 @@ Figure~\ref{fig:calibration} visualizes this correction for the Stacking Ensembl
 \bibitem{ref17} Y. Zhuang \& R. Fu. (2026). \textit{Wildfire Ignition-Day Vapor Pressure Deficit Trend and Its Weakening Atmospheric Circulation Control Over the Western United States}. Geophysical Research Letters, 53(2), e2025GL119159. \url{https://doi.org/10.1029/2025GL119159}
 \bibitem{ref18} \textit{Probability Calibration for Boosting Models}. (2024). Ecological Indicators, Elsevier. \url{https://doi.org/10.1016/j.ecolind.2024.112226}
 \bibitem{ref19} MCP Analytics. \textit{Voting Ensemble: Practical Guide for Data-Driven Decisions}. Available at: mcpanalytics.ai
-\bibitem{vanWagner1987} van Wagner, C. E. (1987). \textit{Development and Structure of the Canadian Forest Fire Weather Index System}. Forestry Technical Report, 35. Canadian Forestry Service, Ottawa, Canada.
+\bibitem[van Wagner(1987)]{vanWagner1987} van Wagner, C. E. (1987). \textit{Development and Structure of the Canadian Forest Fire Weather Index System}. Forestry Technical Report, 35. Canadian Forestry Service, Ottawa, Canada.
 \end{thebibliography}
+
 
 
 \end{document}

@@ -46,9 +46,10 @@ outputs/
 results/
 
 # ------------------------------------------------------------------------------
-# 4. Large Asset Documents, Binaries & Repomix Packs
+# 4. Large Asset Documents, Binaries, Office & Repomix Packs
 # ------------------------------------------------------------------------------
 *.pdf
+*.docx
 *.msi
 *.exe
 *.zip
@@ -56,6 +57,9 @@ results/
 *.7z
 *.xml
 catboost_info/
+*_backup/
+models_prelag_backup/
+outputs_prelag_backup/
 
 # ------------------------------------------------------------------------------
 # 5. Environments, Dependencies & Build Artifacts
@@ -73,14 +77,28 @@ node_modules/
 package-lock.json
 
 # ------------------------------------------------------------------------------
-# 6. Environment & Secret Keys
+# 6. LaTeX Intermediate Build Artifacts
+# ------------------------------------------------------------------------------
+*.aux
+*.bbl
+*.blg
+*.out
+*.toc
+*.lot
+*.lof
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+
+# ------------------------------------------------------------------------------
+# 7. Environment & Secret Keys
 # ------------------------------------------------------------------------------
 .env
 .env.*
 !.env.example
 
 # ------------------------------------------------------------------------------
-# 7. IDE & OS Junk
+# 8. IDE & OS Junk
 # ------------------------------------------------------------------------------
 .vscode/
 .idea/
@@ -88,3 +106,5 @@ package-lock.json
 Thumbs.db
 *.log
 logs/
+*.bak
+

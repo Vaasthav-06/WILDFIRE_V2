@@ -32,3 +32,12 @@ catboost>=1.2.2
 
 # --- Explainability Layer (WHY Engine) ---
 shap>=0.44.0
+
+# --- Microservice & API Backend ---
+fastapi>=0.115.0
+uvicorn>=0.30.0
+pydantic>=2.7.0
+google-generativeai>=0.8.0
+
+# --- PDF & Document Generation ---
+fpdf2>=2.8.0
