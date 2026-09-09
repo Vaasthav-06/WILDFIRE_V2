@@ -97,5 +97,21 @@ section5_body = """1. Data Ingestion: Raw latitude and longitude coordinates for
 5. Output: The system outputs a final prediction number between 0.0 and 1.0. If the score is greater than 0.50, the area is flagged for High Risk. If it exceeds 0.80, it is escalated to Critical Risk, alerting forest management to take immediate preventative action."""
 pdf.print_chapter(5, "5. HOW THE PREDICTION WORKS (END-TO-END)\n------------------------------------------------------------", section5_body)
 
+section6_body = """As noted in the project documentation, Accuracy can be misleading in wildfire prediction due to the massive class imbalance (fires are extremely rare compared to non-fire events). Therefore, Recall (the ability to successfully catch and flag actual fires) and ROC-AUC are the most critical metrics for this system.
+
+Classification Report (All Models)
+- XGBoost: Accuracy (89.62%), Precision (85.08%), Recall (95.88%), F1 (90.16%), ROC-AUC (95.71%)
+- Voting Ensemble: Accuracy (89.61%), Precision (86.22%), Recall (94.09%), F1 (89.99%), ROC-AUC (95.24%)
+- Random Forest: Accuracy (89.58%), Precision (87.35%), Recall (92.37%), F1 (89.79%), ROC-AUC (95.38%)
+- LightGBM: Accuracy (89.46%), Precision (87.09%), Recall (92.46%), F1 (89.70%), ROC-AUC (95.43%)
+- CatBoost: Accuracy (89.20%), Precision (86.48%), Recall (92.72%), F1 (89.50%), ROC-AUC (95.15%)
+- Stacking Ensemble: Accuracy (89.10%), Precision (88.71%), Recall (89.42%), F1 (89.06%), ROC-AUC (95.33%)
+- Logistic Regression: Accuracy (81.59%), Precision (78.76%), Recall (86.09%), F1 (82.27%), ROC-AUC (88.31%)
+
+Key Takeaways:
+1. Best Operational Model: XGBoost actually performs the best for early-warning purposes because it has the highest Recall (95.88%). This means it successfully catches nearly 96% of all actual fires, which is the most critical metric for safety.
+2. The Accuracy Trap: All models hover around 89% accuracy (except Logistic Regression). However, the gradient-boosted tree models heavily outperform the simple Logistic Regression baseline, proving that complex, non-linear relationships in the weather data are vital for predicting wildfires."""
+pdf.print_chapter(6, "6. CLASSIFICATION REPORT & METRICS\n------------------------------------------------------------", section6_body)
+
 pdf.output("WILDFIRE_PREDICTION_REPORT.pdf")
 print("Successfully generated WILDFIRE_PREDICTION_REPORT.pdf")
